@@ -1,10 +1,11 @@
 /* Name: Alyssa Comstock
  * Class: CS344 - Operating Systems
- * Date: 
+ * Last Date Edited:  
  * Assignment: Smallsh.c Portfolio Assignment
  * */
 
-
+/* setenv(), unsetenv()  macro*/
+#define _BSD_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,24 +15,28 @@
 #include <unistd.h>
 
 
-/* FUNCTION PROTOTPES */
-char *getFullUserInput(void);
-int getArgsFromInput(char*, char**);
-void userArgsCleanUp(char**, int);
-void cdAndUpdatePWD(char*);
-
 /* CONSTANTS */
 #define  MAX_LINE_LENGTH  2048
 #define MAX_ARG_NUM  512
 
 /*
 struct userArgs{
-	char *args[MAX_ARG_NUM];
-	char *in_file; // contains the in file supplied by the user
-	char *out_file; // contains the outfile supplied by the user
+	char ** args; // contains the args
+	char *infile; // contains the in file supplied by the user
+	char *outfile; // contains the outfile supplied by the user
 	int background; // & symbol at end == execute in background, so background = 1. Else background = 0
-}*/
+};
 
+typedef struct userArgs UserArgs;
+*/
+
+/* FUNCTION PROTOTPES */
+char *getFullUserInput(void);
+int getArgsFromInput(char*, char**);
+void userArgsCleanUp(char**, int);
+void cdAndUpdatePWD(char*);
+/* struct specific function prototype*/
+//void addArgsToStruct(char **, UserArgs *Args, int);
 
 
 int main(){
@@ -43,31 +48,37 @@ int main(){
 		// clean user input in to args	
 		char *user_args[MAX_ARG_NUM];
 		int amount = getArgsFromInput(userInput, user_args);	
-
+		
+		// create the userArgs struct
+		//UserArgs Args;
+		
+		// add the user args to the struct
+		//addArgsToStruct(user_args, &Args, amount);		
+	
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(user_args[0], "exit") == 0 || strcmp(user_args[0], "exit\n") == 0){
 			// deal with handling processes and
 		
-
+			/* TODO:
+ 			*  - CHECK FOR ZOMBIE PROCESSES AND WAIT FOR THEM TO END
+ 			* */
 
 			// memory clean up before returning
 			free(userInput);
 			userArgsCleanUp(user_args, amount);
+			// we are done here!
 			exit(0);
 		}else if(strcmp(user_args[0], "cd") == 0){
 			// cd to user defined dir in the command
 			fprintf(stdout, "cd to dir: %s\n", user_args[1]);
-			fflush(stdout); 
-			// cd to dir and resume asking for user input
-			// - Do NOT need to support input / output redirection
-			// for these built in commands
-			// - commands do not have to set any exit status
-			// -if a user tries to run one of these built in commands in 
-			// the background with the & option, ignore it and run in the 
-			// foreground anyway. dont display an error, just run
+			fflush(stdout);
+			/* TODO: 
+ 			*   - MAKE SURE THAT ABSOLUTE AND RELATIVE PATHS BOTH WORK
+ 			*   - MAKE SURE THAT IF THERE ARE NO ARGUMENTS, CHANGE TO WHERE THE HOME ENV VAR IS 
+ 			*     SPECIFIED
+ 			*/
 			cdAndUpdatePWD(user_args[1]);
-		
-		
+				
 		}else if(strcmp(user_args[0], "status") == 0 || strcmp(user_args[0], "status\n") == 0){
 			fprintf(stdout, "post status\n");
 			fflush(stdout);
@@ -77,11 +88,8 @@ int main(){
 			fprintf(stdout, "other args\n");
 			fflush(stdout);
 		}
-	
 
-		// other args handled here
-
-		// trash collection
+		// trash collection before loop continues
 		userArgsCleanUp(user_args, amount);
 		free(userInput);
 	}while(1);	
@@ -89,19 +97,65 @@ int main(){
 }
 
 
+/*
+void addArgsToStruct(char ** user_args, UserArgs *Args, int amount){
+	fprintf(stdout,"made it!\n%d\n", amount);
+	fflush(stdout);
+	int amount_args = 0;
+	Args->args = malloc(amount + 1);
+	for(size_t i = 0; i<amount; ++i){
+		// malloc
+		if(user_args[i][0] != '>' && user_args[i][0] != '<' && strcmp(user_args[i], "&") != 0){
+			// add it
+			fprintf(stdout, "adding <3 %s\n", user_args[i]);
+			fflush(stdout);
+			Args->args[i] = malloc(strlen(user_args[i])+1);
+			strcpy(Args->args[i], user_args[i]);
+			Args->args[i][strlen(user_args[i])] = '\0';
+			amount_args++;
+		}else if(user_args[i][0] == '>' ){
+			// outfile
+			fprintf(stdout, "out file\n");
+			fflush(stdout);
+			Args->outfile = malloc(strlen(user_args[i])+1);
+			strcpy(Args->outfile, user_args[i]);
+			Args->outfile[strlen(user_args[i])] = '\0';
+		}else if(user_args[i][0] == '<'){
+			// infile
+			fprintf(stdout, "in file\n");
+			fflush(stdout);
+			Args->infile = malloc(strlen(user_args[i])+1);
+			strcpy(Args->infile, user_args[i]);
+			Args->infile[strlen(user_args[i])] = '\0';
+		}else if(strcmp(user_args[i], "&") == 0){
+			// run in background flag
+			fprintf(stdout, "run in background\n");
+			fflush(stdout);
+		}
+	}
+	Args->args = realloc(Args->args, amount_args+1);
+	Args->args[amount_args] = '\0';
+}*/
+
+
+
 void cdAndUpdatePWD(char * toGoTo){
-	fprintf(stdout,"hello %s\n", toGoTo);
 	char buffer[256];
 	int res = chdir(toGoTo);
 	if(res == 0){
 		// we successfully changed dir, need to update pwd
 		getcwd(buffer, 255);
 		fprintf(stdout, "buffer size: %zu\n", strlen(buffer));
+		fflush(stdout);
 		buffer[strlen(buffer)] = '\0';
 		setenv("PWD", buffer, 1);
+	}else{
+		// error message but its not enough to exit
+		fprintf(stderr, "Error with cd: dir does not exist\n");
+		fflush(stderr);
 	}
-	// if chdir succeeded we need to UPDATE PWD in the environmental variables
-	fprintf(stdout, "after: %s\n", buffer);
+
+	fprintf(stdout,"pwd: %s\npwdenv: %s\n", buffer, getenv("PWD"));
 	fflush(stdout);
 }
 
