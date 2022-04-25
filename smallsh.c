@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 
@@ -17,6 +18,7 @@
 char *getFullUserInput(void);
 int getArgsFromInput(char*, char**);
 void userArgsCleanUp(char**, int);
+void cdAndUpdatePWD(char*);
 
 /* CONSTANTS */
 #define  MAX_LINE_LENGTH  2048
@@ -34,62 +36,75 @@ struct userArgs{
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
-	//do{	
-	// get user input from stdin
-	char * userInput = getFullUserInput();
-	// clean user input in to args	
-	char *user_args[MAX_ARG_NUM];
-	int amount = getArgsFromInput(userInput, user_args);	
+	fflush(stdout);
+	do{	
+		// get user input from stdin
+		char * userInput = getFullUserInput();
+		// clean user input in to args	
+		char *user_args[MAX_ARG_NUM];
+		int amount = getArgsFromInput(userInput, user_args);	
 
-	// check first arg for exit, cd, status in a chain
-	if(strcmp(user_args[0], "exit") == 0 || strcmp(user_args[0], "exit\n") == 0){
-		// deal with handling processes and
+		// check first arg for exit, cd, status in a chain
+		if(strcmp(user_args[0], "exit") == 0 || strcmp(user_args[0], "exit\n") == 0){
+			// deal with handling processes and
 		
 
 
-		// memory clean up before returning
-		free(userInput);
-		userArgsCleanUp(user_args, amount);
-		exit(0);
-	}else if(strcmp(user_args[0], "cd") == 0){
-		// cd to user defined dir in the command
-		fprintf(stdout, "cd to dir: %s\n", user_args[1]);
-		fflush(stdout); 
-		// cd to dir and resume asking for user input
+			// memory clean up before returning
+			free(userInput);
+			userArgsCleanUp(user_args, amount);
+			exit(0);
+		}else if(strcmp(user_args[0], "cd") == 0){
+			// cd to user defined dir in the command
+			fprintf(stdout, "cd to dir: %s\n", user_args[1]);
+			fflush(stdout); 
+			// cd to dir and resume asking for user input
+			// - Do NOT need to support input / output redirection
+			// for these built in commands
+			// - commands do not have to set any exit status
+			// -if a user tries to run one of these built in commands in 
+			// the background with the & option, ignore it and run in the 
+			// foreground anyway. dont display an error, just run
+			cdAndUpdatePWD(user_args[1]);
 		
-
-		pid_t childPid;
-		switch(childPid = fork()){
-			case -1:
-				fprintf(stderr, "Failed to fork! \n");
-				exit(1);
-			case -:
-				// child
-				fprintf(stdout, "it forking worked\n");
-				break;
-			default:
-				sleep(3);
-				break;
+		
+		}else if(strcmp(user_args[0], "status") == 0 || strcmp(user_args[0], "status\n") == 0){
+			fprintf(stdout, "post status\n");
+			fflush(stdout);
+			// check the status
+		}else{
+			// handle other args here
+			fprintf(stdout, "other args\n");
+			fflush(stdout);
 		}
-	}else if(strcmp(user_args[0], "status") == 0 || strcmp(user_args[0], "status\n") == 0){
-		fprintf(stdout, "post status\n");
-		fflush(stdout);
-		// check the status
-	}else{
-		// handle other args here
-		fprintf(stdout, "other args\n");
-		fflush(stdout);
-	}
 	
 
-	// other args handled here
+		// other args handled here
 
-	// trash collection
-	userArgsCleanUp(user_args, amount);
-	free(userInput);
-	//}while(1);	
+		// trash collection
+		userArgsCleanUp(user_args, amount);
+		free(userInput);
+	}while(1);	
 	return 0;
 }
+
+
+void cdAndUpdatePWD(char * toGoTo){
+	fprintf(stdout,"hello %s\n", toGoTo);
+	char buffer[256];
+	int res = chdir(toGoTo);
+	if(res == 0){
+		// we successfully changed dir, need to update pwd
+		getcwd(buffer, 255);
+		fprintf(stdout, "buffer size: %zu\n", strlen(buffer));
+		buffer[strlen(buffer)] = '\0';
+		setenv("PWD", buffer, 1);
+	}
+	// if chdir succeeded we need to UPDATE PWD in the environmental variables
+	fprintf(stdout, "after: %s\n", buffer);
+	fflush(stdout);
+}
+
 
 
 
@@ -194,6 +209,9 @@ char *getFullUserInput(void){
 		fflush(stdout);
 		fgets(buffer, MAX_LINE_LENGTH, stdin);
 		buffer[strlen(buffer)] = '\0';	
+		if(buffer[strlen(buffer)-1]=='\n'){
+			buffer[strlen(buffer)-1] = '\0';
+		}
 	}while(strlen(buffer) < 2 || buffer[0] == '#');
 	
 	cmd_size = strlen(buffer);
