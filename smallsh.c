@@ -19,16 +19,17 @@
 #define  MAX_LINE_LENGTH  2048
 #define MAX_ARG_NUM  512
 
-/*
+
 struct userArgs{
-	char ** args; // contains the args
+	char * args[MAX_ARG_NUM]; // contains the args
 	char *infile; // contains the in file supplied by the user
 	char *outfile; // contains the outfile supplied by the user
 	int background; // & symbol at end == execute in background, so background = 1. Else background = 0
+	int amount_args; // For deallocation
 };
 
 typedef struct userArgs UserArgs;
-*/
+
 
 /* FUNCTION PROTOTPES */
 char *getFullUserInput(void);
@@ -36,117 +37,205 @@ int getArgsFromInput(char*, char**);
 void userArgsCleanUp(char**, int);
 void cdAndUpdatePWD(char*);
 /* struct specific function prototype*/
-//void addArgsToStruct(char **, UserArgs *Args, int);
+void addArgsToStruct(char **, UserArgs *Args, int);
+void displayArgs(UserArgs *Args);
+
 
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
 	fflush(stdout);
+
+
+	// init child stuff	
+	int childStatus = 0;
+	//int childPid;
+	pid_t spawnpid = -5;	
+	
+
+
 	do{	
 		// get user input from stdin
 		char * userInput = getFullUserInput();
 		// clean user input in to args	
 		char *user_args[MAX_ARG_NUM];
-		int amount = getArgsFromInput(userInput, user_args);	
-		
-		// create the userArgs struct
-		//UserArgs Args;
-		
-		// add the user args to the struct
-		//addArgsToStruct(user_args, &Args, amount);		
 	
-		// check first arg for exit, cd, status in a chain
-		if(strcmp(user_args[0], "exit") == 0 || strcmp(user_args[0], "exit\n") == 0){
-			// deal with handling processes and
-		
-			/* TODO:
- 			*  - CHECK FOR ZOMBIE PROCESSES AND WAIT FOR THEM TO END
- 			* */
+		int amount = getArgsFromInput(userInput, user_args);
 
+		UserArgs Args;
+	
+		// add the user args to the struct
+		addArgsToStruct(user_args, &Args, amount);		
+	
+		// testing display
+		displayArgs(&Args);
+
+		userArgsCleanUp(user_args, amount);
+		free(userInput);
+
+		// check first arg for exit, cd, status in a chain
+		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){
+			// deal with handling processes ending
+			int z;
+			do{
+				z = wait(NULL);
+				fprintf(stdout, "Freed: %d\n", z);
+			}while(z != -1);		
+	
 			// memory clean up before returning
-			free(userInput);
-			userArgsCleanUp(user_args, amount);
+			userArgsCleanUp(Args.args, Args.amount_args);
+
+			if(Args.infile){
+				free(Args.infile);
+			}
+			if(Args.outfile){
+				free(Args.outfile);
+			}
 			// we are done here!
 			exit(0);
-		}else if(strcmp(user_args[0], "cd") == 0){
+		}else if(strcmp(Args.args[0], "cd") == 0){
 			// cd to user defined dir in the command
-			fprintf(stdout, "cd to dir: %s\n", user_args[1]);
+			fprintf(stdout, "cd to dir: %s\n", Args.args[1]);
 			fflush(stdout);
 			/* TODO: 
- 			*   - MAKE SURE THAT ABSOLUTE AND RELATIVE PATHS BOTH WORK
- 			*   - MAKE SURE THAT IF THERE ARE NO ARGUMENTS, CHANGE TO WHERE THE HOME ENV VAR IS 
- 			*     SPECIFIED
+ 			*  - MAKE SURE THAT ABSOLUTE AND RELATIVE PATHS BOTH WORK
  			*/
-			cdAndUpdatePWD(user_args[1]);
+			cdAndUpdatePWD(Args.args[1]);
 				
-		}else if(strcmp(user_args[0], "status") == 0 || strcmp(user_args[0], "status\n") == 0){
+		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
 			fprintf(stdout, "post status\n");
 			fflush(stdout);
-			// check the status
+			fprintf(stdout,"Status: %d\n", childStatus);
+			fflush(stdout);
 		}else{
 			// handle other args here
 			fprintf(stdout, "other args\n");
 			fflush(stdout);
+			spawnpid = fork();
+			
+			switch(spawnpid){
+				case -1:
+					fprintf(stderr, "Failed to fork.\n");
+					fflush(stderr);
+					exit(1);
+					break;
+				case 0:
+					// child code
+					exit(0);
+					break;
+				default:
+					wait(&childStatus);
+					break;
+			}
+				
+			
+	
 		}
 
 		// trash collection before loop continues
-		userArgsCleanUp(user_args, amount);
-		free(userInput);
+		userArgsCleanUp(Args.args, Args.amount_args);
+		if(Args.infile){
+			free(Args.infile);
+		}
+		if(Args.outfile){
+			free(Args.outfile);
+		}
 	}while(1);	
 	return 0;
 }
 
 
-/*
+
+/* Function that takes arr of arrs user_args and adds it to the struct
+ *
+ * @param: user_args, raw 2d arr of args
+ * */
 void addArgsToStruct(char ** user_args, UserArgs *Args, int amount){
-	fprintf(stdout,"made it!\n%d\n", amount);
-	fflush(stdout);
-	int amount_args = 0;
-	Args->args = malloc(amount + 1);
+
+	Args->infile = NULL;
+	Args->outfile = NULL;
+	Args->background = 0;
+	Args->amount_args = 0;
+
 	for(size_t i = 0; i<amount; ++i){
 		// malloc
 		if(user_args[i][0] != '>' && user_args[i][0] != '<' && strcmp(user_args[i], "&") != 0){
 			// add it
-			fprintf(stdout, "adding <3 %s\n", user_args[i]);
-			fflush(stdout);
-			Args->args[i] = malloc(strlen(user_args[i])+1);
-			strcpy(Args->args[i], user_args[i]);
-			Args->args[i][strlen(user_args[i])] = '\0';
-			amount_args++;
-		}else if(user_args[i][0] == '>' ){
+			Args->args[Args->amount_args] = malloc(strlen(user_args[i])+1);
+			strcpy(Args->args[Args->amount_args], user_args[i]);
+			Args->args[Args->amount_args][strlen(user_args[i])] = '\0';
+			Args->amount_args++;
+		}else if(user_args[i][0] == '<' ){
 			// outfile
-			fprintf(stdout, "out file\n");
-			fflush(stdout);
 			Args->outfile = malloc(strlen(user_args[i])+1);
 			strcpy(Args->outfile, user_args[i]);
 			Args->outfile[strlen(user_args[i])] = '\0';
-		}else if(user_args[i][0] == '<'){
+		}else if(user_args[i][0] == '>'){
 			// infile
-			fprintf(stdout, "in file\n");
-			fflush(stdout);
 			Args->infile = malloc(strlen(user_args[i])+1);
 			strcpy(Args->infile, user_args[i]);
 			Args->infile[strlen(user_args[i])] = '\0';
-		}else if(strcmp(user_args[i], "&") == 0){
-			// run in background flag
-			fprintf(stdout, "run in background\n");
-			fflush(stdout);
 		}
 	}
-	Args->args = realloc(Args->args, amount_args+1);
-	Args->args[amount_args] = '\0';
-}*/
+	if(strcmp(user_args[amount-1], "&") == 0){
+		// set background
+		Args->background = 1;
+	}
+
+	Args->args[Args->amount_args] = '\0';
+	return;
+}
 
 
 
+/* Function that displays the args in the struct
+ * shows if process is supposed to run in the background
+ * shows infiles and outfiles
+ * */
+void displayArgs(UserArgs *Args){
+
+	fprintf(stdout, "=====PRINTING ARGS=====\n");
+	fflush(stdout);
+	// testing prints
+	for(int j = 0; j<Args->amount_args; ++j){
+		fprintf(stdout,"arg: %s\n", Args->args[j]);
+		fflush(stdout);
+	}
+	if(Args->infile){
+		fprintf(stdout, "infile: %s\n", Args->infile);
+		fflush(stdout);
+	}
+	if(Args->outfile){
+		fprintf(stdout, "outfile: %s\n", Args->outfile);
+		fflush(stdout);
+	}
+	if(Args->background){
+		fprintf(stdout, "background: %d\n", Args->background);
+		fflush(stdout);
+	}
+	return; 
+}
+
+
+
+/* Function that handles changing directories
+ * If no directory to go to is give, go to home directory 
+ * from environment variables
+ *
+ * @param: toGoTo: absolute / relative path to change to.
+ * */
 void cdAndUpdatePWD(char * toGoTo){
+	if(toGoTo == NULL){
+		// if no arg to cd to, cd to HOME env val
+		toGoTo = getenv("HOME");
+	}
+
 	char buffer[256];
 	int res = chdir(toGoTo);
+	
 	if(res == 0){
 		// we successfully changed dir, need to update pwd
 		getcwd(buffer, 255);
-		fprintf(stdout, "buffer size: %zu\n", strlen(buffer));
-		fflush(stdout);
 		buffer[strlen(buffer)] = '\0';
 		setenv("PWD", buffer, 1);
 	}else{
@@ -154,9 +243,6 @@ void cdAndUpdatePWD(char * toGoTo){
 		fprintf(stderr, "Error with cd: dir does not exist\n");
 		fflush(stderr);
 	}
-
-	fprintf(stdout,"pwd: %s\npwdenv: %s\n", buffer, getenv("PWD"));
-	fflush(stdout);
 }
 
 
@@ -170,7 +256,6 @@ void cdAndUpdatePWD(char * toGoTo){
 void userArgsCleanUp(char *user_args[], int amount){
 	for(int i=0; i < amount; ++i){
 			if(user_args[i] == NULL){
-				//free(user_args);
 				break;
 			}			
 			free(user_args[i]);
