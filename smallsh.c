@@ -35,64 +35,46 @@ typedef struct userArgs UserArgs;
 
 
 /* FUNCTION PROTOTPES */
-char *getFullUserInput(void);
-int getArgsFromInput(char*, char**);
-void userArgsCleanUp(char**, int);
+int getFullUserInput(UserArgs *Args);
 void cdAndUpdatePWD(char*);
+void cleanUpProcesses();
 /* struct specific function prototype*/
-void addArgsToStruct(char **, UserArgs *Args, int);
 void displayArgs(UserArgs *Args);
-
-
+void cleanUpArgs(UserArgs *Args);
+void clearArgs(UserArgs *Args);
+void dealloArgs(UserArgs *Args);
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
 	fflush(stdout);
-
+	atexit(cleanUpProcesses);
 
 	// init child stuff	
 	int childStatus = 0;
-	//int childPid;
-	pid_t childPid = -5;	
-	
-	/* TODO: GET ECHO WORKING BEFORE TRYING TO RUN THE TEST SCRIPT*/
+	pid_t childPid = -5;		
 
-	do{	
-		// get user input from stdin
-		char * userInput = getFullUserInput();
-		// clean user input in to args	
-		char *user_args[MAX_ARG_NUM];
+	do{
 	
-		int amount = getArgsFromInput(userInput, user_args);
-
+		// struct for user input to go to
 		UserArgs Args;
 	
-		// add the user args to the struct
-		addArgsToStruct(user_args, &Args, amount);		
-	
+		// get user input from stdin
+		int r = 0;
+		do{
+			clearArgs(&Args);
+			r = getFullUserInput(&Args);
+			r == 0 ? dealloArgs(&Args) : 1;
+		}while(r == 0);
+		
 		// testing display
-		//displayArgs(&Args);
-
-		userArgsCleanUp(user_args, amount);
-		free(userInput);
+		displayArgs(&Args);
 
 		// check first arg for exit, cd, status in a chain
-		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){
-			// deal with handling processes ending
-			int z;
-			do{
-				z = wait(NULL);
-				fprintf(stdout, "Freed: %d\n", z);
-				fflush(stdout);
-			}while(z != -1);		
-	
-			// memory clean up before returning
-			//userArgsCleanUp(Args.args, Args.amount_args);
-
-			for(int i=0; i < Args.amount_args; ++i) free(Args.args[i]);
+		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
+			dealloArgs(&Args);
 			// we are done here!
 			exit(0);
-		}else if(strcmp(Args.args[0], "cd") == 0){
+		}/*else if(strcmp(Args.args[0], "cd") == 0){
 			// cd to user defined dir in the command
 			fprintf(stdout, "cd to dir: %s\n", Args.args[1]);
 			fflush(stdout);
@@ -127,7 +109,7 @@ int main(){
 					//fprintf(stdout,"Child successfully spawned\n");
 					//fflush(stdout);
 						
-					if(Args.infile[0] != '\0'){
+					if(Args.infile[0] != '\0'){*/
 						/* Citation for use of dup2 to read in stdin output into infile
  						 * Author: Michael Kerrisk
  						 * Book: The Linus Programming Interface
@@ -137,7 +119,7 @@ int main(){
  						 * Adapted frome example code on use of dup2
  						 * */
 						// open in file, get contents from execvp, put it in infile.
-						int fd = open(Args.infile, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+						/*int fd = open(Args.infile, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 						if(fd == -1){
 							// error
 							fprintf(stderr, "Cannot open %s for input\n", Args.infile);
@@ -150,7 +132,7 @@ int main(){
 						close(fd);
 					}
 
-					if(Args.outfile[0] != '\0'){
+					if(Args.outfile[0] != '\0'){*/
 						/* Citation for use of dup2 to read in stdin output into infile
  						* Author: Michael Kerrisk
  						* Book: The Linus Programming Interface
@@ -163,7 +145,7 @@ int main(){
 						// if there is an outfile
 						//fprintf("outfile\n");
 						//fflush(stdout);
-					}
+					/*}
 
 					
 					// execute command	
@@ -194,61 +176,12 @@ int main(){
 				
 			
 	
-		}
+		}*/
 
 		// trash collection before loop continues
-		for(int i=0; i < Args.amount_args; ++i) free(Args.args[i]);
-
-		//if(Args.infile){
-		//	free(Args.infile);
-		//}
-		//if(Args.outfile){
-		//	free(Args.outfile);
-		//}
+		dealloArgs(&Args);	
 	}while(1);	
 	return 0;
-}
-
-
-
-/* Function that takes arr of arrs user_args and adds it to the struct
- *
- * @param: user_args, raw 2d arr of args
- * */
-void addArgsToStruct(char ** user_args, UserArgs *Args, int amount){
-
-	//for(int i=0; i<Args->amount_args; ++i) Args->args[i] = NULL;
-	Args->infile[0] = '\0';
-	Args->outfile[0] = '\0';
-	Args->background = 0;
-	Args->amount_args = 0;
-
-	for(size_t i = 0; i<amount; ++i){
-		// malloc
-		if(user_args[i][0] == '<' && user_args[i][1] == ' ' ){
-			// outfile
-			strncpy(Args->outfile, user_args[i]+2, strlen(user_args[i])-2);
-			Args->outfile[strlen(user_args[i])-2] = '\0';
-		}else if(user_args[i][0] == '>' && user_args[i][1] == ' '){
-			// infile
-			strncpy(Args->infile, user_args[i]+2, strlen(user_args[i])-2);
-			Args->infile[strlen(user_args[i])-2] = '\0';
-		}else if(strcmp(user_args[i], "&") != 0){
-			// add it
-			Args->args[Args->amount_args] = malloc(strlen(user_args[i])+1);
-			strncpy(Args->args[Args->amount_args], user_args[i], strlen(user_args[i]));
-			Args->args[Args->amount_args][strlen(user_args[i])] = '\0';
-			Args->amount_args++;
-		}
-	}
-
-	if(strcmp(user_args[amount-1], "&") == 0){
-		// set background
-		Args->background = 1;
-	}
-	Args->args[Args->amount_args] = NULL;
-	Args->args[Args->amount_args] = '\0';
-	return;
 }
 
 
@@ -314,120 +247,140 @@ void cdAndUpdatePWD(char * toGoTo){
 
 
 
-
-/* Function that cleans up a dynamically allocated 2d arr
+/* getFullUserInput(*Args)
+ * Function that reads the user input from the command line,
+ * and returns to main 0 if there was no issue.
  *
- * @param user_args: arr to free
- * @param amount: number of elements to free
+ * @params: Args; struct object to store the user input
+ * returns success or failure int
  * */
-void userArgsCleanUp(char *user_args[], int amount){
-	for(int i=0; i < amount; ++i){
-			if(user_args[i] == NULL){
-				break;
-			}			
-			free(user_args[i]);
+int getFullUserInput(UserArgs *Args){
+	// read in character one at a time, so we need a temp buffer
+	char buffer[MAX_LINE_LENGTH+1];
+	fprintf(stdout, ": ");
+	fflush(stdout);
+
+	int f = 0; // 0 = args; 1 = in; 2 = out
+	char t = 0;
+	size_t i = 0;
+	do{
+		// read in characters one at a time
+		t = fgetc(stdin);
+		if(t == '$' && buffer[i-1] == '$'){
+			// variable expansion, if current == $, change prev to be the pid 
+			// and skip adding this one
+	
+			/* Citation for using snprintf to convert an int to a string
+ 	 		 * Date: 4/28/2022
+ 	 		 * Adapted from code provided by the professor in the ed discussion
+ 	 		 * Url: https://edstem.org/us/courses/21025/discussion/1437434?answer=3250618
+ 	 		 * */
+
+			pid_t pid = getpid();
+			int length = snprintf(NULL, 0, "%jd", pid);
+			char *p;
+			p = malloc(length+1); 
+			snprintf(p, length+1, "%jd", pid);
+			i--; // go back 1 to change the previous $ into the pid
+			for(int j=0; j<length; j++){
+				// because string pid is going to be of any length we
+				// add each new pid string char to the buffer and add 1
+				buffer[i] = p[j];
+				i++; // add up how many char we added
+			}
+			free(p);
+
 		}
-	return;
+		if(t == ' ' || t=='\n'){
+			// t == current; buffer[i] == prev	
+			buffer[i-1] == '>' ? f = 1: 1;
+			buffer[i-1] == '<' ? f = 2: 1;
+			buffer[i] = '\0';	
+			if(f == 0 && buffer[i] != '>' && buffer[i] != '<'){
+				// normal arg, add it to the char*[] arg list.	
+				Args->args[Args->amount_args] = malloc(i+1);
+				strncpy(Args->args[Args->amount_args], buffer, i);
+				Args->args[Args->amount_args][i] = '\0';
+				Args->amount_args++;
+			}else if(f == 1 ){
+				// in, add it to the infile struct obj	
+				strncpy(Args->infile, buffer, i);
+				Args->infile[i] = '\0';
+			}else if(f == 2 ){
+				strncpy(Args->outfile, buffer, i);
+				Args->outfile[i] = '\0';
+			}
+			memset(buffer, '\0', MAX_LINE_LENGTH);
+			i = 0;
 
-}
+		}else{
+			//get buffer until u
+			buffer[i] = t;
+			i++;
+		}
 
+	}while(t!=EOF && t!='\n');
 
+	if(Args->amount_args == 0){
+		return 0;
+	}	
+	if(strcmp(Args->args[Args->amount_args-1], "&") == 0){
+		// remove from Args list, and set the background flag
+		free(Args->args[Args->amount_args-1]);
+		Args->amount_args--;
+		Args->background = 1;
+	}
+	Args->args[Args->amount_args] = NULL;
 
-/* getArgsFromInput(char*)
- * Function that splits the user input and get the args from the input
- *
- * @param: to_split: string array of the user input to split
- * return: split arr of user args
- * */
-int getArgsFromInput(char *to_split, char *user_args[]){
-
-	/* Citation for string tokenization:
- 	 * Date: 4/22/2022 
- 	 * Adapted from:
- 	 * Source URL: https://stackoverflow.com/a/4160297
- 	 * */
-	char *token = strtok(to_split, " ");
-	char *last = token;
-	if(token == NULL){
+	if(strcmp(Args->args[0], "#") == 0){
 		return 0;
 	}
-	int i = 0;
-	while(token != NULL){
-		// add each item to array of arrays
-		if(strcmp(token, "&") !=0 && strcmp(token, "<") != 0 && strcmp(token, ">") != 0 && strcmp(last, "<") != 0 && strcmp(last, ">") !=0){
-			user_args[i] = malloc(strlen(token)+1);
-			strcpy(user_args[i], token);
-			user_args[i][strlen(token)] = '\0';
-			i++;
-		}else if((strcmp(last, "<") == 0 || strcmp(last, ">") == 0) && last != token){
-			// create a temp that is the size of the current token + last + 1 for space + 1 for '\0'
-			char* temp = malloc(strlen(token)+strlen(last)+2);
-			strcpy(temp, last);
-			temp[strlen(token)+strlen(last)+1] = '\0';
-			// last + space + token + '\0' = < [token]\0
-			strcat(temp, " ");
-			strcat(temp, token);
-			user_args[i] = malloc(strlen(temp)+1);
-			strcpy(user_args[i], temp);
-			
-			// add this to the args
-			user_args[i][strlen(temp)] = '\0';
-			i++;
-			last = temp;
-			free(temp);
-		}		
 		
-		last = token;
-		// advance the token
-		token = strtok(NULL, " ");
-	}
-	if(strcmp(last, "&") == 0){
-		// add it iff last val
-		user_args[i] = malloc(strlen(last)+1);
-		strcpy(user_args[i], last);
-		user_args[i][strlen(last)] = '\0';
-		i++;
-	}
-	user_args[i] = '\0';
+	return 1;
+}
 
-	// return size
-	return i;
+
+
+
+/* clearArgs(*Args)
+ * Function that resets all the varaibles in the UserArgs object struct
+ * Gets the struct and sets all the values to 0, NULL or \0 when needed
+ *
+ * @params: Args: struct object to clear.
+ * Returns: nothing
+ * */
+void clearArgs(UserArgs *Args){
+	
+	// resetting vars
+	memset(Args->infile, '\0', sizeof(char)*MAX_ARG_NUM);
+	memset(Args->infile, '\0', sizeof(char)*MAX_ARG_NUM);
+	for(int i=0; i<MAX_ARG_NUM; ++i) Args->args[i] = NULL;
+	Args->background = 0;
+	Args->amount_args = 0;
 
 }
 
 
 
-/* getFullUserInput(void)
- * Function that reads the user input from the command line,
- * and returns it to main.
+/* cleanUpArgs(*Args)
+ * Function that deallocates all the items in the UserArgs
+ * struct object, specifically the char *[] args array.
  *
- * @params: none
- * returns char * user input pointer.
+ * @param: *Args: struct object to deallocate.
  * */
-char *getFullUserInput(void){
-	// init vars
-	char buffer[MAX_LINE_LENGTH+1]={1};
-	int cmd_size = 0;
-		
-	// read in user input
+void dealloArgs(UserArgs *Args){
+	// frees each item in the arr that has been allocated
+	for(int i=0; i < Args->amount_args; i++) free(Args->args[i]);
+}
+
+
+
+void cleanUpProcesses(){
+	int z;
 	do{
-		fprintf(stdout,": "); // cmd line start
+		z = wait(NULL);
+		fprintf(stdout, "Freed: %d\n", z);
 		fflush(stdout);
-		fgets(buffer, MAX_LINE_LENGTH, stdin);
-		buffer[strlen(buffer)] = '\0';	
-		if(buffer[strlen(buffer)-1]=='\n'){
-			buffer[strlen(buffer)-1] = '\0';
-		}
-	}while(strlen(buffer) < 2 || buffer[0] == '#');
-	
-	cmd_size = strlen(buffer);
+	}while(z != -1);		
 
-	// dynamically create the array.
-	char *cmd = malloc(cmd_size+1);
-	strncpy(cmd, buffer, cmd_size);
-
-	// make sure that the null terminator is properly added.
-	cmd[cmd_size] = '\0';
-
-	return cmd;
 }
