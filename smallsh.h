@@ -1,8 +1,16 @@
+/* Name: Alyssa Comstock
+ * Class: CS344 - Operating Systems
+ * Assignment: Portfolio Project - SmallSH
+ * Date: 4/29/2022
+ * Descrption: Header file that contains the struct definition, contants,
+ * function prototypes, and global variables for the main smallsh.c file
+ * */
+
 /* CONSTANTS */
 #define  MAX_LINE_LENGTH  2048
 #define MAX_ARG_NUM  512
 
-
+/* STRUCT DEFINITION*/
 struct userArgs{
 	char * args[MAX_ARG_NUM]; // contains the args
 	char infile[256]; // contains the in file supplied by the user
@@ -18,9 +26,19 @@ typedef struct userArgs UserArgs;
 int getFullUserInput(UserArgs *Args);
 void cdAndUpdatePWD(char*);
 void cleanUpProcesses();
+int handleRedirection(UserArgs *Args);
+void flushAllStreams(void);
+
+
 /* struct specific function prototype*/
 void displayArgs(UserArgs *Args);
 void cleanUpArgs(UserArgs *Args);
 void clearArgs(UserArgs *Args);
 void dealloArgs(UserArgs *Args);
+
+
+
+
+/* GLOBALS */
+int pidList[25] = {-1}; // list that stores childPids, inits all of the pids to -1
 

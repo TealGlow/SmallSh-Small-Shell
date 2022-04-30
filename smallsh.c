@@ -2,10 +2,13 @@
  * Class: CS344 - Operating Systems
  * Last Date Edited:  
  * Assignment: Smallsh.c Portfolio Assignment
+ * Description: Contains a smallsh program that handles user commands
+ * and runs the user command either in the foreground or background.
  * */
 
 /* setenv(), unsetenv()  macro*/
 #define _BSD_SOURCE
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +18,7 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "smallsh.h"
 
@@ -44,24 +48,70 @@ void cleanUpProcesses();*/
 void cleanUpArgs(UserArgs *Args);
 void clearArgs(UserArgs *Args);
 void dealloArgs(UserArgs *Args);*/
-
+/*
 int handleRedirection(UserArgs *Args);
 void flushAllStreams(void);
 
 // globals
 int pidList[25] = {-1}; // list that stores childPids, inits all of the pids to -1
+*/
+
+// SIGACTION HANDLERS
+void sig_handler(int sig);
+void sig_handler2(int sig);
+void zombie_handler(int sig);
 
 
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
-	fflush(stdout);
+	flushAllStreams();
+
+	// on normal exit, clean up zombie processes
 	atexit(cleanUpProcesses);
 
 	// init child stuff	
 	int childStatus = 0;
 	pid_t childPid = -5;
+
+	// Signal handlers!
+	// Signal handler for when a child finishes:
+	struct sigaction s_child;
 	
+	sigemptyset(&s_child.sa_mask);
+	s_child.sa_flags = 0;
+	s_child.sa_handler = zombie_handler;
+	// sigchld from lectures - handles when child's state changes
+	if(sigaction(SIGCHLD, &s_child, NULL)==-1){
+		fprintf(stdout, "Error in sigaction for child processes.\n");
+		flushAllStreams();
+		exit(1);
+	}
+	/*
+	// for signal handling for ctrl+c	
+	struct sigaction sa_c;
+
+	sigemptyset(&sa_c.sa_mask);
+	sa_c.sa_flags = 0;
+	sa_c.sa_handler = sig_handler;
+	if(sigaction(SIGINT, &sa_c, NULL) == -1){
+		fprintf(stdout, "error sig_c\n");
+		flushAllStreams();
+		exit(1);
+	}
+
+	struct sigaction sa_z;
+	
+	sigemptyset(&sa_z.sa_mask);
+	sa_z.sa_flags = 0;
+	sa_z.sa_handler = sig_handler2;
+	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
+		fprintf(stdout, "error sig_z\n");
+		flushAllStreams();
+		exit(1);
+	}
+	*/
+
 	do{
 	
 		// struct for user input to go to
@@ -151,21 +201,16 @@ int main(){
 				default:
 					// wait for child to come back
 					if(Args.background == 1){
-						childPid = waitpid(childPid, &childStatus, WNOHANG);
+						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
 
-						// process set to run in the background, we are going to store the pid
-						for(int i=0; i<25; ++i){
-							if(pidList[i] == -1){
-								pidList[i] = childPid;
-								break;
-							}
-						}
+						// process set to run in the background, we are going to store the pis
 
-					fprintf(stdout, "pidList: \n", pidList[0]);
-					flushAllStreams();
+						// example output says to output the child pid like this
+						fprintf(stdout, "background pid is %d\n", childPid);
+						flushAllStreams();
 
 					}else{
-						childPid = waitpid(childPid, &childStatus, 0);
+						pid_t resPid = waitpid(childPid, &childStatus, 0);
 					}
 
 
@@ -190,6 +235,25 @@ int main(){
 	return 0;
 }
 
+
+
+void sig_handler(int sig){
+	fprintf(stdout, "terminated by signal %d\n", sig);
+	flushAllStreams();
+}
+
+void sig_handler2(int sig){
+	fprintf(stdout, "hello world %d\n", sig);
+	flushAllStreams();
+}
+void zombie_handler(int sig){
+	pid_t childPid;
+	int childStatus;
+
+	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
+		printf("Background pid %d us done: exit value %d\n", childPid, childStatus);
+	}	
+}
 
 
 /* handleRedirection
