@@ -16,10 +16,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "smallsh.h"
 
 
 /* CONSTANTS */
-#define  MAX_LINE_LENGTH  2048
+/*#define  MAX_LINE_LENGTH  2048
 #define MAX_ARG_NUM  512
 
 
@@ -32,17 +33,25 @@ struct userArgs{
 };
 
 typedef struct userArgs UserArgs;
-
+*/
 
 /* FUNCTION PROTOTPES */
-int getFullUserInput(UserArgs *Args);
+/*int getFullUserInput(UserArgs *Args);
 void cdAndUpdatePWD(char*);
-void cleanUpProcesses();
+void cleanUpProcesses();*/
 /* struct specific function prototype*/
-void displayArgs(UserArgs *Args);
+/*void displayArgs(UserArgs *Args);
 void cleanUpArgs(UserArgs *Args);
 void clearArgs(UserArgs *Args);
-void dealloArgs(UserArgs *Args);
+void dealloArgs(UserArgs *Args);*/
+
+int handleRedirection(UserArgs *Args);
+void flushAllStreams(void);
+
+// globals
+int pidList[25] = {-1}; // list that stores childPids, inits all of the pids to -1
+
+
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
@@ -51,8 +60,8 @@ int main(){
 
 	// init child stuff	
 	int childStatus = 0;
-	pid_t childPid = -5;		
-
+	pid_t childPid = -5;
+	
 	do{
 	
 		// struct for user input to go to
@@ -61,20 +70,22 @@ int main(){
 		// get user input from stdin
 		int r = 0;
 		do{
+			fprintf(stdout, ": ");
+			flushAllStreams();
 			clearArgs(&Args);
 			r = getFullUserInput(&Args);
 			r == 0 ? dealloArgs(&Args) : 1;
 		}while(r == 0);
 		
 		// testing display
-		displayArgs(&Args);
+		//displayArgs(&Args);
 
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
 			dealloArgs(&Args);
 			// we are done here!
 			exit(0);
-		}/*else if(strcmp(Args.args[0], "cd") == 0){
+		}else if(strcmp(Args.args[0], "cd") == 0){
 			// cd to user defined dir in the command
 			fprintf(stdout, "cd to dir: %s\n", Args.args[1]);
 			fflush(stdout);
@@ -84,104 +95,190 @@ int main(){
 		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
 			fprintf(stdout, "post status\n");
 			fflush(stdout);
-			fprintf(stdout,"Status: %d\n", childStatus);
+			fflush(stdin);
+			fflush(stderr);	
+
+			fprintf(stdout,"Status: %d\n", WEXITSTATUS(childStatus));
+
 			fflush(stdout);
+			fflush(stdin);
+			fflush(stderr);	
+
 		}else{
 			// handle other args here
-			//fprintf(stdout, "other args\n");
-			//fflush(stdout);
 			childPid = fork();
+		
 			
 			// TODO: REMOVE LATER
 			// testing: automatically kill process after 10 min
-			alarm(600);		
+			alarm(250);		
 	
 			switch(childPid){
 				case -1:
 					fprintf(stderr, "Failed to fork.\n");
+					fflush(stdout);
+					fflush(stdin);
 					fflush(stderr);	
-					for(int i=0; i < Args.amount_args; ++i) free(Args.args[i]);
 
+					dealloArgs(&Args);	
 					exit(1);
 					break;
-				case 0:
-					// child code
-					//fprintf(stdout,"Child successfully spawned\n");
-					//fflush(stdout);
-						
-					if(Args.infile[0] != '\0'){*/
-						/* Citation for use of dup2 to read in stdin output into infile
- 						 * Author: Michael Kerrisk
- 						 * Book: The Linus Programming Interface
- 						 * Chapter: 27.4 - File Descriptors and exec()
- 						 * Page: 576
- 						 * Date: 4/27/2022
- 						 * Adapted frome example code on use of dup2
- 						 * */
-						// open in file, get contents from execvp, put it in infile.
-						/*int fd = open(Args.infile, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
-						if(fd == -1){
-							// error
-							fprintf(stderr, "Cannot open %s for input\n", Args.infile);
-							fflush(stderr);
-						}
-						fflush(stdout);
-						if(fd!=STDOUT_FILENO){
-							dup2(fd, STDOUT_FILENO);
-						}
-						close(fd);
+				case 0:	
+
+
+					fflush(stdout);
+					fflush(stdin);
+					fflush(stderr);	
+					if(handleRedirection(&Args) == 1){
+						dealloArgs(&Args);
+						exit(1);
 					}
+							
+					fflush(stdout);
+					fflush(stdin);
+					fflush(stderr);	
 
-					if(Args.outfile[0] != '\0'){*/
-						/* Citation for use of dup2 to read in stdin output into infile
- 						* Author: Michael Kerrisk
- 						* Book: The Linus Programming Interface
- 						* Chapter: 27.4 - File Descriptors and exec()
- 						* Page: 576
- 						* Date: 4/27/2022
- 						* Adapted frome example code on use of dup2
- 						* */
-
-						// if there is an outfile
-						//fprintf("outfile\n");
-						//fflush(stdout);
-					/*}
-
-					
 					// execute command	
 					execvp(Args.args[0], Args.args);
 					
 					fprintf(stderr, "Error with cmd\n");
 					fflush(stderr);
-					// mem clean up
-					for(int i=0; i < Args.amount_args; ++i) free(Args.args[i]);
 
+					// mem clean up
+					dealloArgs(&Args);	
 					exit(2);
 					break;
 				default:
-				
-					fflush(stdout);	
 					// wait for child to come back
-					childPid = waitpid(childPid, &childStatus, 0);
-					
-					if(WIFEXITED(childStatus)){
-						fprintf(stdout, "Child %d exited normally with status %zu\n", childPid, childStatus);
+					if(Args.background == 1){
+						childPid = waitpid(childPid, &childStatus, WNOHANG);
+
+						// process set to run in the background, we are going to store the pid
+						for(int i=0; i<25; ++i){
+							if(pidList[i] == -1){
+								pidList[i] = childPid;
+								break;
+							}
+						}
+
+					fprintf(stdout, "pidList: \n", pidList[0]);
+					flushAllStreams();
+
+					}else{
+						childPid = waitpid(childPid, &childStatus, 0);
+					}
+
+
+					/*if(WIFEXITED(childStatus)){
+						fprintf(stdout, "Child %d exited normally with status %zu\n", childPid, WEXITSTATUS(childStatus));
 						fflush(stdout);
 					}else{
 						fprintf(stdout,"Child %d exited abnormally due to signal %zu\n", childPid, childStatus);
 						fflush(stdout);
-					}
+					}*/
 					break;
 			}
 				
 			
 	
-		}*/
+		}
 
+		fflush(stdout);
 		// trash collection before loop continues
 		dealloArgs(&Args);	
 	}while(1);	
 	return 0;
+}
+
+
+
+/* handleRedirection
+ * Function that handles the redirection of stdin, stdout
+ * in to files and out of files using dup2
+ * If a processes needs to run in to the background, then redirection goes to
+ * /dev/null and is read from /dev/null
+ *
+ * @param: UserArgs struct object containing the infile and outfile information
+ * returns: 1 if there was an error; 0 otherwise.
+ * */
+int handleRedirection(UserArgs *Args){
+	if(Args->infile[0] != '\0'){
+		/* Citation for use of dup2 to read in stdin output into infile
+		 * Author: Michael Kerrisk
+		 * Book: The Linux Programming Interface
+		 * Chapter: 27.4 - File Descriptors and exec()
+		 * Page: 576
+		 * Date: 4/27/2022
+		 * Adapted frome example code on use of dup2
+		 * */
+		// open in file, get contents from execvp, put it in infile.
+		int fd = open(Args->infile, O_WRONLY | O_CREAT | O_TRUNC, 00700);
+		if(fd == -1){
+			// error
+			fprintf(stderr, "Cannot open %s for writing.\n", Args->infile);
+			fflush(stderr);
+			return 1;
+		}
+		fflush(stdout);
+		if(fd!=STDOUT_FILENO){
+			dup2(fd, STDOUT_FILENO);
+		}
+		close(fd);
+	}
+
+	if(Args->outfile[0] != '\0'){
+		/* Citation for use of dup2 to read in stdin output into infile
+ 		* Author: Michael Kerrisk
+ 		* Book: The Linux Programming Interface
+ 		* Chapter: 27.4 - File Descriptors and exec()
+ 		* Page: 576
+ 		* Date: 4/27/2022
+ 		* Adapted frome example code on use of dup2
+ 		* */
+
+		// if there is an outfile
+		int fd2 = open(Args->outfile, O_RDONLY);
+		if(fd2 == -1){
+			// error
+			fprintf(stderr, "Cannot open %s for reading.\n", Args->outfile);
+			fflush(stderr);
+			return 1;
+		}
+		fflush(stdin);
+		if(fd2!=STDIN_FILENO){
+			dup2(fd2, STDIN_FILENO);
+		}
+		close(fd2);
+	}
+
+	/*else if(Args.outfile[0] == '\0' && Args.infile[0] == '\0' && Args.background == 1){
+		// Redirect all input through
+		fflush(stdin);
+		fflush(stdout);
+		int fd3 = open("/dev/null", 0);
+		if(fd3 == -1){
+			fprintf(stderr, "Cannot open /dev/null for writing.\n");
+			fflush(stderr);	
+			return 1;
+		}
+		fflush(stdout);
+		if(fd3 != STDOUT_FILENO){
+			dup2(fd3, STDOUT_FILENO);
+		}
+		close(fd3);
+	}	*/
+	return 0;
+}
+
+
+
+/* flushAllStreams
+ * Function that fflush's stdin, stdout, and stderr
+ * */
+void flushAllStreams(){
+	fflush(stdin);
+	fflush(stdout);
+	fflush(stderr);
 }
 
 
@@ -257,9 +354,6 @@ void cdAndUpdatePWD(char * toGoTo){
 int getFullUserInput(UserArgs *Args){
 	// read in character one at a time, so we need a temp buffer
 	char buffer[MAX_LINE_LENGTH+1];
-	fprintf(stdout, ": ");
-	fflush(stdout);
-
 	int f = 0; // 0 = args; 1 = in; 2 = out
 	char t = 0;
 	size_t i = 0;
@@ -291,7 +385,7 @@ int getFullUserInput(UserArgs *Args){
 			free(p);
 
 		}
-		if(t == ' ' || t=='\n'){
+		else if(t == ' ' || t=='\n'){
 			// t == current; buffer[i] == prev	
 			buffer[i-1] == '>' ? f = 1: 1;
 			buffer[i-1] == '<' ? f = 2: 1;
@@ -375,12 +469,25 @@ void dealloArgs(UserArgs *Args){
 
 
 
+/* cleanUpProcesses()
+ * function that cleans up any extra zombie
+ * processes that might have been left behind
+ * this function is automatically called at the end of
+ * normal program exit with atexit
+ * */
 void cleanUpProcesses(){
-	int z;
+	/*int z;
 	do{
 		z = wait(NULL);
 		fprintf(stdout, "Freed: %d\n", z);
 		fflush(stdout);
-	}while(z != -1);		
+	}while(z != -1);*/
+	int j = -1;
+	int childStatus;
+	for(int i=0; i<25; ++i){
+		j = waitpid(pidList[i], &childStatus, 0); 
+		fprintf(stdout, "Freed: %d\n", j);
+		flushAllStreams();
+	}
 
 }
