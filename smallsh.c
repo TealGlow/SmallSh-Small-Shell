@@ -23,6 +23,8 @@
 // my header contains struct definition, function prototypes, and constants
 #include "smallsh.h"
 
+// foreground only check
+int fg_only = 0;
 
 
 int main(){
@@ -31,7 +33,8 @@ int main(){
 
 	// on normal exit, clean up zombie processes
 	atexit(zombie_handler);
-
+	
+	
 	// init child stuff	
 	int childStatus = 0;
 	pid_t childPid = -5;
@@ -50,10 +53,10 @@ int main(){
 		fflush(stdout);
 		exit(1);
 	}
-	/*
+	
 	// for signal handling for ctrl+c	
 	struct sigaction sa_c;
-
+	/*
 	sigemptyset(&sa_c.sa_mask);
 	sa_c.sa_flags = 0;
 	sa_c.sa_handler = sig_handler;
@@ -61,19 +64,19 @@ int main(){
 		fprintf(stdout, "error sig_c\n");
 		flushAllStreams();
 		exit(1);
-	}
-
+	}*/
+	
 	struct sigaction sa_z;
 	
 	sigemptyset(&sa_z.sa_mask);
-	sa_z.sa_flags = 0;
-	sa_z.sa_handler = sig_handler2;
+	sa_z.sa_flags = SA_RESTART;
+	sa_z.sa_handler = sig_handlerz;
 	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
 		fprintf(stdout, "error sig_z\n");
-		flushAllStreams();
+		fflush(stdout);
 		exit(1);
 	}
-	*/
+	
 
 	do{
 	
@@ -84,12 +87,14 @@ int main(){
 		int r = 1;
 
 		while(r==1){
+		//	sigsetjmp(test,0);
+					
 			fflush(stdin);
 			clearArgs(&Args);
 			r = getFullUserInput(&Args);
 			r == 1  ? dealloArgs(&Args) : 1;
 		}
-		
+	
 		// testing display
 		//displayArgs(&Args);
 
@@ -159,7 +164,7 @@ int main(){
 					break;
 				default:
 					// wait for child to come back
-					if(Args.background == 1){
+					if(Args.background == 1 && !fg_only){
 						// from the lectures, use of WNOHANG for child to run in background.
 						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
 
@@ -196,9 +201,21 @@ void sig_handler(int sig){
 
 
 
-void sig_handler2(int sig){
-	fprintf(stdout, "hello world %d\n", sig);
-	fflush(stdout);
+void sig_handlerz(int sig){
+	if(fg_only == 1){
+		// exit foreground only
+		fg_only = 0;
+		char msg[34] = "\nExiting foreground-only mode.\n: \0";
+		write(STDOUT_FILENO, msg, sizeof(msg)); 
+		fflush(stdout);
+		//siglongjmp(test,0);
+	}else{
+		fg_only=1;
+		char msg[54] = "\nEntering foreground-only mode. (& is now ignored)\n: \0";
+		write(STDOUT_FILENO, msg, sizeof(msg));
+		fflush(stdout);
+		//siglongjmp(test,0);
+	}
 }
 
 
@@ -222,7 +239,9 @@ void zombie_handler(){
 	//
 	// "-1 meaning wait for any child process."
 	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
-		write(STDERR_FILENO, "\nRETURNED\n", 9);
+		write(STDERR_FILENO, "\nbackground pid ", 9);
+		write(STDERR_FILENO, &childPid, sizeof(childPid));
+		
 		fflush(stdout);
 		fflush(stderr);
 		fflush(stdin);
