@@ -24,8 +24,10 @@
 #include "smallsh.h"
 
 // foreground only check
-int fg_only = 0;
-
+int fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
+int background_term = -1; // is a process is terminated, then the status will be put here as a posi number
+int activepids[100]={-1};
+int num_pids = 0;
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
@@ -43,7 +45,7 @@ int main(){
  	// Signal handler for when a child finishes:
 	struct sigaction s_child;
 
-	
+	/*	
 	sigemptyset(&s_child.sa_mask);
 	s_child.sa_flags = SA_RESTART;
 	s_child.sa_handler = zombie_handler;
@@ -52,10 +54,10 @@ int main(){
 		fprintf(stdout, "Error in sigaction for child processes.\n");
 		fflush(stdout);
 		exit(1);
-	}
+	}*/
 	
 	// for signal handling for ctrl+c	
-	struct sigaction sa_c;
+	//struct sigaction sa_c;
 	/*
 	sigemptyset(&sa_c.sa_mask);
 	sa_c.sa_flags = 0;
@@ -65,17 +67,19 @@ int main(){
 		flushAllStreams();
 		exit(1);
 	}*/
-	
-	struct sigaction sa_z;
+
+	// signal handler for ctrl + z, this will flip the global variable making
+	// something as foreground or background. 	
+	/*struct sigaction sa_z;
 	
 	sigemptyset(&sa_z.sa_mask);
-	sa_z.sa_flags = SA_RESTART;
+	sa_z.sa_flags = SA_RESTART; // flag to make reentry not interrupt user command input
 	sa_z.sa_handler = sig_handlerz;
 	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
 		fprintf(stdout, "error sig_z\n");
 		fflush(stdout);
 		exit(1);
-	}
+	}*/
 	
 
 	do{
@@ -167,7 +171,11 @@ int main(){
 					if(Args.background == 1 && !fg_only){
 						// from the lectures, use of WNOHANG for child to run in background.
 						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
-
+						activepids[num_pids]=childPid;
+						num_pids++;
+						for(int i=0; i < num_pids; ++i){
+							fprintf(stdout, "background: %d\n", activepids[i]);
+						}
 						// process set to run in the background, we are going to store the pis
 
 						// example output says to output the child pid like this
@@ -201,20 +209,25 @@ void sig_handler(int sig){
 
 
 
-void sig_handlerz(int sig){
+/* sig_handlerz(void)
+ *
+ * Function that handles the signal for ctrl+z
+ * Toggles between background and foreground mode
+ *
+ * Displays the message to the user.
+ * */
+void sig_handlerz(){
 	if(fg_only == 1){
 		// exit foreground only
 		fg_only = 0;
 		char msg[34] = "\nExiting foreground-only mode.\n: \0";
 		write(STDOUT_FILENO, msg, sizeof(msg)); 
 		fflush(stdout);
-		//siglongjmp(test,0);
 	}else{
 		fg_only=1;
 		char msg[54] = "\nEntering foreground-only mode. (& is now ignored)\n: \0";
 		write(STDOUT_FILENO, msg, sizeof(msg));
 		fflush(stdout);
-		//siglongjmp(test,0);
 	}
 }
 
@@ -239,8 +252,8 @@ void zombie_handler(){
 	//
 	// "-1 meaning wait for any child process."
 	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
-		write(STDERR_FILENO, "\nbackground pid ", 9);
-		write(STDERR_FILENO, &childPid, sizeof(childPid));
+		char msg[17] = "\nBackground pid \0";
+		write(STDERR_FILENO, msg, sizeof(msg));
 		
 		fflush(stdout);
 		fflush(stderr);

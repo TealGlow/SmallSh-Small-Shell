@@ -35,6 +35,6 @@ void dealloArgs(UserArgs *Args); // deallocates the malloc'd memory in args stru
 
 /* SIGNAL HANDLERS */
 void sig_handler(int sig);
-void sig_handlerz(int sig);
+void sig_handlerz();
 void zombie_handler();
 
