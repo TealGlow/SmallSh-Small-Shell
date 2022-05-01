@@ -25,20 +25,16 @@ typedef struct userArgs UserArgs;
 /* FUNCTION PROTOTPES */
 int getFullUserInput(UserArgs *Args);
 void cdAndUpdatePWD(char*);
-void cleanUpProcesses();
 int handleRedirection(UserArgs *Args);
-void flushAllStreams(void);
 
 
-/* struct specific function prototype*/
-void displayArgs(UserArgs *Args);
-void cleanUpArgs(UserArgs *Args);
-void clearArgs(UserArgs *Args);
-void dealloArgs(UserArgs *Args);
+/* STRUCT SPECIFIC PROTOTYPES*/
+void displayArgs(UserArgs *Args); // to remove
+void clearArgs(UserArgs *Args); // set everything to 0 or null
+void dealloArgs(UserArgs *Args); // deallocates the malloc'd memory in args struct
 
-
-
-
-/* GLOBALS */
-int pidList[25] = {-1}; // list that stores childPids, inits all of the pids to -1
+/* SIGNAL HANDLERS */
+void sig_handler(int sig);
+void sig_handler2(int sig);
+void zombie_handler();
 

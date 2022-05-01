@@ -20,71 +20,34 @@
 #include <unistd.h>
 #include <signal.h>
 
+// my header contains struct definition, function prototypes, and constants
 #include "smallsh.h"
-
-
-/* CONSTANTS */
-/*#define  MAX_LINE_LENGTH  2048
-#define MAX_ARG_NUM  512
-
-
-struct userArgs{
-	char * args[MAX_ARG_NUM]; // contains the args
-	char infile[256]; // contains the in file supplied by the user
-	char outfile[256]; // contains the outfile supplied by the user
-	int background; // & symbol at end == execute in background, so background = 1. Else background = 0
-	int amount_args; // For deallocation
-};
-
-typedef struct userArgs UserArgs;
-*/
-
-/* FUNCTION PROTOTPES */
-/*int getFullUserInput(UserArgs *Args);
-void cdAndUpdatePWD(char*);
-void cleanUpProcesses();*/
-/* struct specific function prototype*/
-/*void displayArgs(UserArgs *Args);
-void cleanUpArgs(UserArgs *Args);
-void clearArgs(UserArgs *Args);
-void dealloArgs(UserArgs *Args);*/
-/*
-int handleRedirection(UserArgs *Args);
-void flushAllStreams(void);
-
-// globals
-int pidList[25] = {-1}; // list that stores childPids, inits all of the pids to -1
-*/
-
-// SIGACTION HANDLERS
-void sig_handler(int sig);
-void sig_handler2(int sig);
-void zombie_handler(int sig);
 
 
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
-	flushAllStreams();
+	fflush(stdout);
 
 	// on normal exit, clean up zombie processes
-	atexit(cleanUpProcesses);
+	atexit(zombie_handler);
 
 	// init child stuff	
 	int childStatus = 0;
 	pid_t childPid = -5;
 
 	// Signal handlers!
-	// Signal handler for when a child finishes:
+ 	// Signal handler for when a child finishes:
 	struct sigaction s_child;
+
 	
 	sigemptyset(&s_child.sa_mask);
-	s_child.sa_flags = 0;
+	s_child.sa_flags = SA_RESTART;
 	s_child.sa_handler = zombie_handler;
 	// sigchld from lectures - handles when child's state changes
 	if(sigaction(SIGCHLD, &s_child, NULL)==-1){
 		fprintf(stdout, "Error in sigaction for child processes.\n");
-		flushAllStreams();
+		fflush(stdout);
 		exit(1);
 	}
 	/*
@@ -116,16 +79,16 @@ int main(){
 	
 		// struct for user input to go to
 		UserArgs Args;
-	
+		
 		// get user input from stdin
-		int r = 0;
-		do{
-			fprintf(stdout, ": ");
-			flushAllStreams();
+		int r = 1;
+
+		while(r==1){
+			fflush(stdin);
 			clearArgs(&Args);
 			r = getFullUserInput(&Args);
-			r == 0 ? dealloArgs(&Args) : 1;
-		}while(r == 0);
+			r == 1  ? dealloArgs(&Args) : 1;
+		}
 		
 		// testing display
 		//displayArgs(&Args);
@@ -143,17 +106,10 @@ int main(){
 			cdAndUpdatePWD(Args.args[1]);
 				
 		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
-			fprintf(stdout, "post status\n");
+			// post the status to the user
+			fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
 			fflush(stdout);
-			fflush(stdin);
-			fflush(stderr);	
-
-			fprintf(stdout,"Status: %d\n", WEXITSTATUS(childStatus));
-
-			fflush(stdout);
-			fflush(stdin);
-			fflush(stderr);	
-
+	
 		}else{
 			// handle other args here
 			childPid = fork();
@@ -162,24 +118,27 @@ int main(){
 			// TODO: REMOVE LATER
 			// testing: automatically kill process after 10 min
 			alarm(250);		
-	
+			/* Citation for switch statement to handle forking
+ 			 * Date: 4/26/2022
+ 			 * Copied and adapted from code provided in lectures about forking
+ 			 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-environment?module_item_id=22026550
+ 			 * */	
 			switch(childPid){
 				case -1:
 					fprintf(stderr, "Failed to fork.\n");
-					fflush(stdout);
-					fflush(stdin);
 					fflush(stderr);	
 
 					dealloArgs(&Args);	
 					exit(1);
 					break;
 				case 0:	
-
+					// successful child creation
 
 					fflush(stdout);
 					fflush(stdin);
-					fflush(stderr);	
+					fflush(stderr);	 // flush streams for input / output redirection
 					if(handleRedirection(&Args) == 1){
+						// function that redirects input and output depending
 						dealloArgs(&Args);
 						exit(1);
 					}
@@ -190,8 +149,8 @@ int main(){
 
 					// execute command	
 					execvp(Args.args[0], Args.args);
-					
-					fprintf(stderr, "Error with cmd\n");
+							
+					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
 					fflush(stderr);
 
 					// mem clean up
@@ -201,26 +160,19 @@ int main(){
 				default:
 					// wait for child to come back
 					if(Args.background == 1){
+						// from the lectures, use of WNOHANG for child to run in background.
 						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
 
 						// process set to run in the background, we are going to store the pis
 
 						// example output says to output the child pid like this
 						fprintf(stdout, "background pid is %d\n", childPid);
-						flushAllStreams();
-
+						fflush(stdout);
 					}else{
 						pid_t resPid = waitpid(childPid, &childStatus, 0);
 					}
 
 
-					/*if(WIFEXITED(childStatus)){
-						fprintf(stdout, "Child %d exited normally with status %zu\n", childPid, WEXITSTATUS(childStatus));
-						fflush(stdout);
-					}else{
-						fprintf(stdout,"Child %d exited abnormally due to signal %zu\n", childPid, childStatus);
-						fflush(stdout);
-					}*/
 					break;
 			}
 				
@@ -239,21 +191,44 @@ int main(){
 
 void sig_handler(int sig){
 	fprintf(stdout, "terminated by signal %d\n", sig);
-	flushAllStreams();
+	fflush(stdout);
 }
+
+
 
 void sig_handler2(int sig){
 	fprintf(stdout, "hello world %d\n", sig);
-	flushAllStreams();
+	fflush(stdout);
 }
-void zombie_handler(int sig){
+
+
+
+/* zombie_handler
+ * Function that waits for all zombie processes to end
+ * and displays to the user when it does and what id ended.
+ * */
+void zombie_handler(){
 	pid_t childPid;
 	int childStatus;
-
+	
+	/* Citation for the use of waitpid
+ 	 * Date: 4/29/2022
+ 	 * Referenced and used for clean up of zombie processes
+ 	 * url: https://linux.die.net/man/2/waitpid
+ 	 * */
+	// According to the linux man, pid < -1 means that 
+	// "wait for any child process whose process group ID is equal to
+	// the absolute valid of pid."
+	//
+	// "-1 meaning wait for any child process."
 	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
-		printf("Background pid %d us done: exit value %d\n", childPid, childStatus);
-	}	
+		write(STDERR_FILENO, "\nRETURNED\n", 9);
+		fflush(stdout);
+		fflush(stderr);
+		fflush(stdin);
+	}
 }
+
 
 
 /* handleRedirection
@@ -279,7 +254,7 @@ int handleRedirection(UserArgs *Args){
 		int fd = open(Args->infile, O_WRONLY | O_CREAT | O_TRUNC, 00700);
 		if(fd == -1){
 			// error
-			fprintf(stderr, "Cannot open %s for writing.\n", Args->infile);
+			fprintf(stderr, "Cannot open %s for output.\n", Args->infile);
 			fflush(stderr);
 			return 1;
 		}
@@ -304,7 +279,7 @@ int handleRedirection(UserArgs *Args){
 		int fd2 = open(Args->outfile, O_RDONLY);
 		if(fd2 == -1){
 			// error
-			fprintf(stderr, "Cannot open %s for reading.\n", Args->outfile);
+			fprintf(stderr, "Cannot open %s for input.\n", Args->outfile);
 			fflush(stderr);
 			return 1;
 		}
@@ -315,7 +290,7 @@ int handleRedirection(UserArgs *Args){
 		close(fd2);
 	}
 
-	/*else if(Args.outfile[0] == '\0' && Args.infile[0] == '\0' && Args.background == 1){
+	else if(Args->outfile[0] == '\0' && Args->infile[0] == '\0' && Args->background == 1){
 		// Redirect all input through
 		fflush(stdin);
 		fflush(stdout);
@@ -326,23 +301,13 @@ int handleRedirection(UserArgs *Args){
 			return 1;
 		}
 		fflush(stdout);
-		if(fd3 != STDOUT_FILENO){
+		if(fd3 != STDOUT_FILENO || fd3!=STDIN_FILENO){
 			dup2(fd3, STDOUT_FILENO);
+			dup2(fd3, STDIN_FILENO);
 		}
 		close(fd3);
-	}	*/
+	}	
 	return 0;
-}
-
-
-
-/* flushAllStreams
- * Function that fflush's stdin, stdout, and stderr
- * */
-void flushAllStreams(){
-	fflush(stdin);
-	fflush(stdout);
-	fflush(stderr);
 }
 
 
@@ -418,12 +383,25 @@ void cdAndUpdatePWD(char * toGoTo){
 int getFullUserInput(UserArgs *Args){
 	// read in character one at a time, so we need a temp buffer
 	char buffer[MAX_LINE_LENGTH+1];
+	memset(buffer, '\0', MAX_LINE_LENGTH);
+
 	int f = 0; // 0 = args; 1 = in; 2 = out
 	char t = 0;
 	size_t i = 0;
+	fprintf(stdout, ": ");
+	fflush(stdout);
+
+
+	fflush(stdin);
+
 	do{
-		// read in characters one at a time
 		t = fgetc(stdin);
+		if((t == ' '&& i==0) || (t == '\n'&&i==0) || (t == '#'&&i==0)){
+			// first value check
+			while(t!='\n') t=fgetc(stdin);
+			return 1;
+		}
+		// read in characters one at a time
 		if(t == '$' && buffer[i-1] == '$'){
 			// variable expansion, if current == $, change prev to be the pid 
 			// and skip adding this one
@@ -449,22 +427,23 @@ int getFullUserInput(UserArgs *Args){
 			free(p);
 
 		}
-		else if(t == ' ' || t=='\n'){
+		else if(t == ' '||t=='\n'){
 			// t == current; buffer[i] == prev	
 			buffer[i-1] == '>' ? f = 1: 1;
 			buffer[i-1] == '<' ? f = 2: 1;
 			buffer[i] = '\0';	
-			if(f == 0 && buffer[i] != '>' && buffer[i] != '<'){
+
+			if(f == 0 && buffer[i-1] != '>' && buffer[i-1] != '<'){
 				// normal arg, add it to the char*[] arg list.	
 				Args->args[Args->amount_args] = malloc(i+1);
 				strncpy(Args->args[Args->amount_args], buffer, i);
 				Args->args[Args->amount_args][i] = '\0';
 				Args->amount_args++;
-			}else if(f == 1 ){
+			}else if(f == 1 && buffer[0] != '\0' && buffer[0]!='>' && buffer[0]!='<' ){
 				// in, add it to the infile struct obj	
 				strncpy(Args->infile, buffer, i);
 				Args->infile[i] = '\0';
-			}else if(f == 2 ){
+			}else if(f == 2 && buffer[0] != '\0' && buffer[0]!='>' && buffer[0]!='<'){
 				strncpy(Args->outfile, buffer, i);
 				Args->outfile[i] = '\0';
 			}
@@ -476,12 +455,9 @@ int getFullUserInput(UserArgs *Args){
 			buffer[i] = t;
 			i++;
 		}
-
-	}while(t!=EOF && t!='\n');
-
-	if(Args->amount_args == 0){
-		return 0;
-	}	
+	}while(t!='\n');
+	// do something with the final character
+	
 	if(strcmp(Args->args[Args->amount_args-1], "&") == 0){
 		// remove from Args list, and set the background flag
 		free(Args->args[Args->amount_args-1]);
@@ -490,11 +466,11 @@ int getFullUserInput(UserArgs *Args){
 	}
 	Args->args[Args->amount_args] = NULL;
 
-	if(strcmp(Args->args[0], "#") == 0){
-		return 0;
+	if(Args->args[0][0] == '#' || Args->amount_args == 0 || Args->args[0][0] == ' '){
+		return 1;
 	}
 		
-	return 1;
+	return 0;
 }
 
 
@@ -520,7 +496,7 @@ void clearArgs(UserArgs *Args){
 
 
 
-/* cleanUpArgs(*Args)
+/* dealloArgs(*Args)
  * Function that deallocates all the items in the UserArgs
  * struct object, specifically the char *[] args array.
  *
@@ -528,30 +504,6 @@ void clearArgs(UserArgs *Args){
  * */
 void dealloArgs(UserArgs *Args){
 	// frees each item in the arr that has been allocated
+	if(Args->amount_args == 0) return;
 	for(int i=0; i < Args->amount_args; i++) free(Args->args[i]);
-}
-
-
-
-/* cleanUpProcesses()
- * function that cleans up any extra zombie
- * processes that might have been left behind
- * this function is automatically called at the end of
- * normal program exit with atexit
- * */
-void cleanUpProcesses(){
-	/*int z;
-	do{
-		z = wait(NULL);
-		fprintf(stdout, "Freed: %d\n", z);
-		fflush(stdout);
-	}while(z != -1);*/
-	int j = -1;
-	int childStatus;
-	for(int i=0; i<25; ++i){
-		j = waitpid(pidList[i], &childStatus, 0); 
-		fprintf(stdout, "Freed: %d\n", j);
-		flushAllStreams();
-	}
-
 }
