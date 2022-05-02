@@ -23,11 +23,15 @@
 // my header contains struct definition, function prototypes, and constants
 #include "smallsh.h"
 
+int theProcessReaper(pid_t childPid, int childStatus);
+
+
 // foreground only check
 int fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
-int background_term = -1; // is a process is terminated, then the status will be put here as a posi number
-int activepids[100]={-1};
-int num_pids = 0;
+//int background_term = -1; // is a process is terminated, then the status will be put here as a posi number
+int activepids[100]={0};
+//int num_pids = 0;
+//volatile sig_atomic_t z_f = -1; // test flag? for signals
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
@@ -35,7 +39,7 @@ int main(){
 
 	// on normal exit, clean up zombie processes
 	atexit(zombie_handler);
-	
+
 	
 	// init child stuff	
 	int childStatus = 0;
@@ -44,7 +48,6 @@ int main(){
 	// Signal handlers!
  	// Signal handler for when a child finishes:
 	struct sigaction s_child;
-
 	/*	
 	sigemptyset(&s_child.sa_mask);
 	s_child.sa_flags = SA_RESTART;
@@ -70,8 +73,9 @@ int main(){
 
 	// signal handler for ctrl + z, this will flip the global variable making
 	// something as foreground or background. 	
-	/*struct sigaction sa_z;
-	
+	struct sigaction sa_z;
+	sigset_t originalMask, blockedMask;
+
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_flags = SA_RESTART; // flag to make reentry not interrupt user command input
 	sa_z.sa_handler = sig_handlerz;
@@ -79,17 +83,40 @@ int main(){
 		fprintf(stdout, "error sig_z\n");
 		fflush(stdout);
 		exit(1);
+	}
+
+	/*struct sigaction sa_z;
+		
+	sigemptyset(&blockedMask);
+	sigaddset(&blockedMask, SIGTSTP);
+	if(sigprocmask(SIG_BLOCK, &blockedMask, &originalMask) == -1){
+		fprintf(stderr, "Error with mask\n");
+	} 
+	sigemptyset(&sa_z.sa_mask);
+	sa_z.sa_flags=0;
+	sa_z.sa_handler = sig_handlerz;
+	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
+		fprintf(stdout, "error sig_z\n");
+		fflush(stdout);
+		exit(1);
 	}*/
-	
 
 	do{
-	
+		//fprintf(stdout, "current active pid list: \n");
+		//fflush(stdout);
+		/*for(int i=0; i<100; i++){
+			fprintf(stdout, "%d, ", activepids[i]);
+			fflush(stdout);
+			if(i%50 == 0){
+				fprintf(stdout, "\n");
+				fflush(stdout);
+			}
+		}
+		fprintf(stdout, "\n");*/
 		// struct for user input to go to
 		UserArgs Args;
-		
 		// get user input from stdin
 		int r = 1;
-
 		while(r==1){
 		//	sigsetjmp(test,0);
 					
@@ -98,19 +125,32 @@ int main(){
 			r = getFullUserInput(&Args);
 			r == 1  ? dealloArgs(&Args) : 1;
 		}
-	
+
+
+		//sigprocmask(&test)	
 		// testing display
 		//displayArgs(&Args);
-
+		
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
 			dealloArgs(&Args);
+			/* Citation for sync killing of background / zombie processes
+			 * date: 5/1/2022
+		 	* Adapted from provided code for synchronous killing of background children
+		 	* from the textbook
+		 	* Book: Linux Programing Interface
+			 * Author: Michael Kerrisk
+		 	* Page: 543
+		 	* */
+			childPid = waitpid(-1, &childStatus, WNOHANG);
+			while(childPid > 0){
+				childPid=waitpid(-1, &childStatus, 0);
+			}
+
 			// we are done here!
 			exit(0);
 		}else if(strcmp(Args.args[0], "cd") == 0){
 			// cd to user defined dir in the command
-			fprintf(stdout, "cd to dir: %s\n", Args.args[1]);
-			fflush(stdout);
 	
 			cdAndUpdatePWD(Args.args[1]);
 				
@@ -140,7 +180,8 @@ int main(){
 					dealloArgs(&Args);	
 					exit(1);
 					break;
-				case 0:	
+				case 0:
+					signal(SIGTSTP, SIG_IGN);	
 					// successful child creation
 
 					fflush(stdout);
@@ -170,17 +211,24 @@ int main(){
 					// wait for child to come back
 					if(Args.background == 1 && !fg_only){
 						// from the lectures, use of WNOHANG for child to run in background.
-						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
-						activepids[num_pids]=childPid;
-						num_pids++;
-						for(int i=0; i < num_pids; ++i){
-							fprintf(stdout, "background: %d\n", activepids[i]);
+						//pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
+						for(int i=0; i<100; ++i){
+							if(childPid == 0) break;
+							if(activepids[i] == 0){
+								activepids[i] = childPid;
+								break;
+							}
 						}
 						// process set to run in the background, we are going to store the pis
 
 						// example output says to output the child pid like this
 						fprintf(stdout, "background pid is %d\n", childPid);
 						fflush(stdout);
+						childPid = waitpid(-1, &childStatus, WNOHANG);
+						while(childPid > 0){
+							fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
+							childPid=waitpid(-1, &childStatus, WNOHANG);
+						}	
 					}else{
 						pid_t resPid = waitpid(childPid, &childStatus, 0);
 					}
@@ -193,13 +241,54 @@ int main(){
 	
 		}
 
+		/* Citation for sync killing of background / zombie processes
+		 * date: 5/1/2022
+		 * Adapted from provided code for synchronous killing of background children
+		 * from the textbook
+		 * Book: Linux Programing Interface
+		 * Author: Michael Kerrisk
+		 * Page: 543
+		 * */
+		for(int i=0; i <100; ++i){
+			childPid = waitpid(activepids[i], &childStatus, WNOHANG);
+			if(childPid > 0){
+				// background process is done
+				fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
+				fflush(stdout);
+				activepids[i] = 0;
+
+			}
+		}
+	
 		fflush(stdout);
 		// trash collection before loop continues
-		dealloArgs(&Args);	
+		dealloArgs(&Args);
+
+		
 	}while(1);	
 	return 0;
 }
 
+
+
+int theProcessReaper(pid_t childPid, int childStatus){
+	/* Citation for sync killing of background / zombie processes
+	 * date: 5/1/2022
+	 * Adapted from provided code for synchronous killing of background children
+	 * from the textbook
+	 * Book: Linux Programing Interface
+	 * Author: Michael Kerrisk
+	 * Page: 543
+	 * */
+	childPid = waitpid(-1, &childStatus, WNOHANG);
+	while(childPid > 0){
+		fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
+		fflush(stdout);
+		childPid=waitpid(-1, &childStatus, WNOHANG);
+	}
+
+
+}
 
 
 void sig_handler(int sig){
@@ -217,6 +306,8 @@ void sig_handler(int sig){
  * Displays the message to the user.
  * */
 void sig_handlerz(){
+	//z_f = 99;
+	//write(STDOUT_FILENO, "hey\0", 4);
 	if(fg_only == 1){
 		// exit foreground only
 		fg_only = 0;
@@ -326,7 +417,7 @@ int handleRedirection(UserArgs *Args){
 		// Redirect all input through
 		fflush(stdin);
 		fflush(stdout);
-		int fd3 = open("/dev/null", 0);
+		int fd3 = open("/dev/null", O_WRONLY);
 		if(fd3 == -1){
 			fprintf(stderr, "Cannot open /dev/null for writing.\n");
 			fflush(stderr);	
