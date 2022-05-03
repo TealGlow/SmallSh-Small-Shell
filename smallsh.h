@@ -29,6 +29,8 @@ void cdAndUpdatePWD(char*);
 int handleRedirection(UserArgs *Args);
 void printChildStatus(void);
 void checkBackgroundProcesses(void);
+void addToActivePidList(int childPid);
+void theProcessReaper(void);
 
 /* STRUCT SPECIFIC PROTOTYPES*/
 void clearArgs(UserArgs *Args); // set everything to 0 or null

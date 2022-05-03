@@ -23,9 +23,11 @@
 // my header contains struct definition, function prototypes, and constants
 #include "smallsh.h"
 
+void printUserArgs(UserArgs *Args);
+
 // foreground only check
 volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
-int activepids[CHILD_PROCESS_CAP]={0};
+int activepids[CHILD_PROCESS_CAP];
 int num_active_processes=0;
 int childStatus = 0;
 pid_t childPid = -5;
@@ -33,40 +35,43 @@ pid_t childPid = -5;
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
-	fflush(stdout);
+	fflush(stdout);	
 
+	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
+	atexit(theProcessReaper);
 	//setSignals();
 	do{
 		// struct for user input to go to
 		UserArgs Args;
+		clearArgs(&Args);
 		// get user input from stdin
 		int r = 1;
 		while(r==1){
-					
 			fflush(stdin);
+			fflush(stdout);
+			fflush(stderr);
+
 			clearArgs(&Args);
+			
 			r = getFullUserInput(&Args);
 			r == 1  ? dealloArgs(&Args) : 1;
 		}
-		
+	
+		//printUserArgs(&Args);	
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
 			dealloArgs(&Args);
-		
-			for(int i=0; i<CHILD_PROCESS_CAP; i++){
-				if(activepids[i] != 0){
-					// KILL!!!!! DESTROY!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-					kill(activepids[i], SIGKILL);
-				}
-			}	
+			// get rid of zombies
+			theProcessReaper();	
 			// we are done here!
 			exit(0);
+			return 0;
 		}else if(strcmp(Args.args[0], "cd") == 0){
 			// cd to user defined dir in the command
 			cdAndUpdatePWD(Args.args[1]);
 		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
 			// post the status to the user
-			printChildStatus();	
+			printChildStatus();
 		}else{
 			// handle other args here
 			childPid = fork();
@@ -84,53 +89,89 @@ int main(){
 					dealloArgs(&Args);	
 					exit(1);
 					break;
-				case 0:		
+				case 0:	
+					fflush(stdin);
+					fflush(stdout);
+					fflush(stderr);
+	
 					// successful child creation
 					if(handleRedirection(&Args) == 1){
 						// function that redirects input and output depending
 						dealloArgs(&Args);
 						exit(1);
 					}	
-
-					// execute command	
-					execvp(Args.args[0], Args.args);
-							
-					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
+					fflush(stdin);
+					fflush(stdout);
 					fflush(stderr);
 
-					// mem clean up
-					dealloArgs(&Args);	
-					exit(2);
-					break;
+					// execute command
+					if(execvp(Args.args[0], Args.args)){			
+						fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
+						fflush(stderr);
+
+						// mem clean up
+						dealloArgs(&Args);
+						exit(1);
+					}
+					return 1;
 				default:
 					// parent
-					if(Args.background == 1 && !fg_only && childPid != 0){ // if background 	
+					if(Args.background == 1 && !fg_only){ // if background 	
+						fprintf(stdout, "background pid is %d\n", childPid);
+						fflush(stdout);
+						childPid = (childPid, &childStatus, WNOHANG);
+	
 						// Add the childPid to the list of active background pids
 						addToActivePidList(childPid);
 						// exmaple output says display background pid like this:
-						fprintf(stdout, "background pid is %d\n", childPid);
-						fflush(stdout);
-						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);	
+												
 					}else{
 						// wait for process to be done.
-						pid_t resPid = waitpid(childPid, &childStatus, 0);
-					}
+						childPid = waitpid(childPid, &childStatus, 0);
+										}
 					// check if a child has returned
-					checkBackgroundProcesses();
+					if(WEXITSTATUS(childStatus) == 1){
+						// kill child
+						kill(childPid, -1);
+					}	
 					break;	
-				}
-				
-			
+				}			
 	
 		}
-		
-		fflush(stdout);
+		/*for(int i=0; i<CHILD_PROCESS_CAP; ++i){
+			childPid = waitpid(activepids[i], &childStatus, WNOHANG);
+			if(childPid > 0){
+				// remove child from background process arr
+				activepids[i] = 0;
+				num_active_processes--;
+				fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(childStatus));
+				fflush(stdout);
+			}
+		}*/
+		checkBackgroundProcesses();
+	
 		// trash collection before loop continues
 		dealloArgs(&Args);
 	}while(1);	
 	return 0;
 }
 
+
+
+/* theProcessReaper
+ *
+ * Function that goes through the list of activepids and kills them
+ * this is done before the exit so that it force closes all the 
+ * active processes.
+ * */
+void theProcessReaper(void){
+	for(int i=0; i<CHILD_PROCESS_CAP; i++){
+		if(activepids[i] != -1){
+			// KILL!!!!! DESTROY!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			kill(activepids[i], SIGINT);
+		}
+	}	
+}
 
 
 
@@ -144,10 +185,10 @@ int main(){
 void addToActivePidList(int childPid){
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
 		if(childPid == 0) break;
-		if(activepids[i] == 0){
+		if(activepids[i] == -1){
 			activepids[i] = childPid;
 			num_active_processes++;
-			return;
+			break;
 		}
 	}
 
@@ -178,6 +219,13 @@ void printChildStatus(void){
 
 }
 
+
+
+void printUserArgs(UserArgs *Args){
+	for(int i=0; i<Args->amount_args; ++i){
+		fprintf(stdout, "Arg: |%s|\n", Args->args[i]);
+	}
+}
 
 
 void setSignals(){
@@ -221,24 +269,17 @@ void checkBackgroundProcesses(void){
 	* Book: Linux Programing Interface
 	* Author: Michael Kerrisk
 	* Page: 543
-	 * */
-	childPid = waitpid(-1, &childStatus, WNOHANG);
-	if(childPid > 0){
-		// remove child from background process arr
-		for(int i=0; i<CHILD_PROCESS_CAP; ++i){
-			if(childPid == activepids[i]){
-				// reset val
-				activepids[i] = 0;
-				num_active_processes--;
-				break;
-			}
-		}
-		// background process is done
-		if(WIFEXITED(childStatus)){
-			fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(childStatus));
-			fflush(stdout);
-		}else{
-			fprintf(stdout, "background process %d was terminated by signal %d.\n", childPid, WTERMSIG(childStatus));
+	 */
+	int status = -5;
+	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
+		pid_t doneCheck = waitpid(activepids[i], &status, WNOHANG);
+		if(doneCheck > 0){
+			// remove child from background process arr
+			activepids[i] = 0;
+			num_active_processes--;
+			childPid = doneCheck;
+			childStatus = status;
+			fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
 			fflush(stdout);
 		}
 	}
@@ -338,20 +379,15 @@ void cdAndUpdatePWD(char * toGoTo){
 	if(toGoTo == NULL){
 		// if no arg to cd to, cd to HOME env val
 		toGoTo = getenv("HOME");
-	}
-
-	char buffer[256];
-	int res = chdir(toGoTo);
+		chdir(toGoTo);
+	}else if(toGoTo){
+		if(chdir(toGoTo) == -1){
+			// error message but its not enough to exit
+			fprintf(stderr, "Error with cd: dir does not exist\n");
+			fflush(stderr);
+			return;
 	
-	if(res == 0){
-		// we successfully changed dir, need to update pwd
-		getcwd(buffer, 255);
-		buffer[strlen(buffer)] = '\0';
-		setenv("PWD", buffer, 1);
-	}else{
-		// error message but its not enough to exit
-		fprintf(stderr, "Error with cd: dir does not exist\n");
-		fflush(stderr);
+		}
 	}
 }
 
