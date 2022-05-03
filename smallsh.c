@@ -105,15 +105,13 @@ int main(){
 					fflush(stderr);
 
 					// execute command
-					if(execvp(Args.args[0], Args.args)){			
-						fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
-						fflush(stderr);
+					execvp(Args.args[0], Args.args);			
+					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
+					fflush(stderr);
 
-						// mem clean up
-						dealloArgs(&Args);
-						exit(1);
-					}
-					return 1;
+					// mem clean up
+					dealloArgs(&Args);
+					exit(1);
 				default:
 					// parent
 					if(Args.background == 1 && !fg_only){ // if background 	
@@ -122,13 +120,11 @@ int main(){
 						childPid = (childPid, &childStatus, WNOHANG);
 	
 						// Add the childPid to the list of active background pids
-						addToActivePidList(childPid);
-						// exmaple output says display background pid like this:
-												
+						addToActivePidList(childPid);			
 					}else{
 						// wait for process to be done.
 						childPid = waitpid(childPid, &childStatus, 0);
-										}
+					}
 					// check if a child has returned
 					if(WEXITSTATUS(childStatus) == 1){
 						// kill child
@@ -138,16 +134,7 @@ int main(){
 				}			
 	
 		}
-		/*for(int i=0; i<CHILD_PROCESS_CAP; ++i){
-			childPid = waitpid(activepids[i], &childStatus, WNOHANG);
-			if(childPid > 0){
-				// remove child from background process arr
-				activepids[i] = 0;
-				num_active_processes--;
-				fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(childStatus));
-				fflush(stdout);
-			}
-		}*/
+		// check if a child is done
 		checkBackgroundProcesses();
 	
 		// trash collection before loop continues
@@ -178,7 +165,7 @@ void theProcessReaper(void){
 /* addToActivePidList
  *
  * Function that adds a number to the active pid list whereever 
- * theres aon open spot
+ * theres an open spot
  *
  * @ param: childPid: pid to add
  * */
@@ -270,6 +257,9 @@ void checkBackgroundProcesses(void){
 	* Author: Michael Kerrisk
 	* Page: 543
 	 */
+	// since we want to keep track of active child processes for the clean up at the end
+	// we need to loop through and check each active child, if its finished we removed it
+	// so that if we exit while a process is active we can kill it before we quit.
 	int status = -5;
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
 		pid_t doneCheck = waitpid(activepids[i], &status, WNOHANG);
@@ -279,7 +269,12 @@ void checkBackgroundProcesses(void){
 			num_active_processes--;
 			childPid = doneCheck;
 			childStatus = status;
-			fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
+			// just like the lecture
+			if(WIFEXITED(childStatus)){
+				fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
+			}else{
+				fprintf(stdout, "background process %d terminated with signal %d.\n", doneCheck, WTERMSIG(status));
+			}
 			fflush(stdout);
 		}
 	}
