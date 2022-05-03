@@ -23,41 +23,167 @@
 // my header contains struct definition, function prototypes, and constants
 #include "smallsh.h"
 
-int theProcessReaper(pid_t childPid, int childStatus);
-
-
 // foreground only check
-int fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
-//int background_term = -1; // is a process is terminated, then the status will be put here as a posi number
-int activepids[100]={0};
-//int num_pids = 0;
-//volatile sig_atomic_t z_f = -1; // test flag? for signals
+volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
+int activepids[CHILD_PROCESS_CAP]={0};
+int num_active_processes=0;
+int childStatus = 0;
+pid_t childPid = -5;
+
 
 int main(){
 	fprintf(stdout, "pid: %d\n", getpid());
 	fflush(stdout);
 
-	// on normal exit, clean up zombie processes
-	atexit(zombie_handler);
+	//setSignals();
+	do{
+		// struct for user input to go to
+		UserArgs Args;
+		// get user input from stdin
+		int r = 1;
+		while(r==1){
+					
+			fflush(stdin);
+			clearArgs(&Args);
+			r = getFullUserInput(&Args);
+			r == 1  ? dealloArgs(&Args) : 1;
+		}
+		
+		// check first arg for exit, cd, status in a chain
+		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
+			dealloArgs(&Args);
+		
+			for(int i=0; i<CHILD_PROCESS_CAP; i++){
+				if(activepids[i] != 0){
+					// KILL!!!!! DESTROY!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+					kill(activepids[i], SIGKILL);
+				}
+			}	
+			// we are done here!
+			exit(0);
+		}else if(strcmp(Args.args[0], "cd") == 0){
+			// cd to user defined dir in the command
+			cdAndUpdatePWD(Args.args[1]);
+		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
+			// post the status to the user
+			printChildStatus();	
+		}else{
+			// handle other args here
+			childPid = fork();
+			alarm(250);			
 
+			/* Citation for switch statement to handle forking
+ 			 * Date: 4/26/2022
+ 			 * Copied and adapted from code provided in lectures about forking
+ 			 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-environment?module_item_id=22026550
+ 			 * */	
+			switch(childPid){
+				case -1:
+					fprintf(stderr, "Failed to fork.\n");
+					fflush(stderr);	
+					dealloArgs(&Args);	
+					exit(1);
+					break;
+				case 0:		
+					// successful child creation
+					if(handleRedirection(&Args) == 1){
+						// function that redirects input and output depending
+						dealloArgs(&Args);
+						exit(1);
+					}	
+
+					// execute command	
+					execvp(Args.args[0], Args.args);
+							
+					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
+					fflush(stderr);
+
+					// mem clean up
+					dealloArgs(&Args);	
+					exit(2);
+					break;
+				default:
+					// parent
+					if(Args.background == 1 && !fg_only && childPid != 0){ // if background 	
+						// Add the childPid to the list of active background pids
+						addToActivePidList(childPid);
+						// exmaple output says display background pid like this:
+						fprintf(stdout, "background pid is %d\n", childPid);
+						fflush(stdout);
+						pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);	
+					}else{
+						// wait for process to be done.
+						pid_t resPid = waitpid(childPid, &childStatus, 0);
+					}
+					// check if a child has returned
+					checkBackgroundProcesses();
+					break;	
+				}
+				
+			
 	
-	// init child stuff	
-	int childStatus = 0;
-	pid_t childPid = -5;
+		}
+		
+		fflush(stdout);
+		// trash collection before loop continues
+		dealloArgs(&Args);
+	}while(1);	
+	return 0;
+}
 
+
+
+
+/* addToActivePidList
+ *
+ * Function that adds a number to the active pid list whereever 
+ * theres aon open spot
+ *
+ * @ param: childPid: pid to add
+ * */
+void addToActivePidList(int childPid){
+	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
+		if(childPid == 0) break;
+		if(activepids[i] == 0){
+			activepids[i] = childPid;
+			num_active_processes++;
+			return;
+		}
+	}
+
+}
+
+
+
+/* printChildStatus()
+ *
+ * Function that prints the previously recieved exit value
+ *  or signal from a child process.
+ * */
+void printChildStatus(void){
+	/* Citation for printing out the child exit value
+	 * or the child signal.
+	 * date: 4/28/2022
+	 * Adapted from code given in the lecture
+	 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-process-api-monitoring-child-processes?module_item_id=22026548
+	 * */
+	if(WIFEXITED(childStatus)){
+		// if child was exited
+		fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
+		fflush(stdout);
+	}else{
+		fprintf(stdout, "signal value %d\n", WTERMSIG(childStatus));
+		fflush(stdout);
+	}
+
+}
+
+
+
+void setSignals(){
 	// Signal handlers!
  	// Signal handler for when a child finishes:
-	struct sigaction s_child;
-	/*	
-	sigemptyset(&s_child.sa_mask);
-	s_child.sa_flags = SA_RESTART;
-	s_child.sa_handler = zombie_handler;
-	// sigchld from lectures - handles when child's state changes
-	if(sigaction(SIGCHLD, &s_child, NULL)==-1){
-		fprintf(stdout, "Error in sigaction for child processes.\n");
-		fflush(stdout);
-		exit(1);
-	}*/
+	//struct sigaction s_child;
 	
 	// for signal handling for ctrl+c	
 	//struct sigaction sa_c;
@@ -71,10 +197,8 @@ int main(){
 		exit(1);
 	}*/
 
-	// signal handler for ctrl + z, this will flip the global variable making
-	// something as foreground or background. 	
+	/*
 	struct sigaction sa_z;
-	sigset_t originalMask, blockedMask;
 
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_flags = SA_RESTART; // flag to make reentry not interrupt user command input
@@ -83,273 +207,42 @@ int main(){
 		fprintf(stdout, "error sig_z\n");
 		fflush(stdout);
 		exit(1);
-	}
-
-	/*struct sigaction sa_z;
-		
-	sigemptyset(&blockedMask);
-	sigaddset(&blockedMask, SIGTSTP);
-	if(sigprocmask(SIG_BLOCK, &blockedMask, &originalMask) == -1){
-		fprintf(stderr, "Error with mask\n");
-	} 
-	sigemptyset(&sa_z.sa_mask);
-	sa_z.sa_flags=0;
-	sa_z.sa_handler = sig_handlerz;
-	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
-		fprintf(stdout, "error sig_z\n");
-		fflush(stdout);
-		exit(1);
 	}*/
 
-	do{
-		//fprintf(stdout, "current active pid list: \n");
-		//fflush(stdout);
-		/*for(int i=0; i<100; i++){
-			fprintf(stdout, "%d, ", activepids[i]);
-			fflush(stdout);
-			if(i%50 == 0){
-				fprintf(stdout, "\n");
-				fflush(stdout);
-			}
-		}
-		fprintf(stdout, "\n");*/
-		// struct for user input to go to
-		UserArgs Args;
-		// get user input from stdin
-		int r = 1;
-		while(r==1){
-		//	sigsetjmp(test,0);
-					
-			fflush(stdin);
-			clearArgs(&Args);
-			r = getFullUserInput(&Args);
-			r == 1  ? dealloArgs(&Args) : 1;
-		}
-
-
-		//sigprocmask(&test)	
-		// testing display
-		//displayArgs(&Args);
-		
-		// check first arg for exit, cd, status in a chain
-		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
-			dealloArgs(&Args);
-			/* Citation for sync killing of background / zombie processes
-			 * date: 5/1/2022
-		 	* Adapted from provided code for synchronous killing of background children
-		 	* from the textbook
-		 	* Book: Linux Programing Interface
-			 * Author: Michael Kerrisk
-		 	* Page: 543
-		 	* */
-			childPid = waitpid(-1, &childStatus, WNOHANG);
-			while(childPid > 0){
-				childPid=waitpid(-1, &childStatus, 0);
-			}
-
-			// we are done here!
-			exit(0);
-		}else if(strcmp(Args.args[0], "cd") == 0){
-			// cd to user defined dir in the command
-	
-			cdAndUpdatePWD(Args.args[1]);
-				
-		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
-			// post the status to the user
-			fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
-			fflush(stdout);
-	
-		}else{
-			// handle other args here
-			childPid = fork();
-		
-			
-			// TODO: REMOVE LATER
-			// testing: automatically kill process after 10 min
-			alarm(250);		
-			/* Citation for switch statement to handle forking
- 			 * Date: 4/26/2022
- 			 * Copied and adapted from code provided in lectures about forking
- 			 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-environment?module_item_id=22026550
- 			 * */	
-			switch(childPid){
-				case -1:
-					fprintf(stderr, "Failed to fork.\n");
-					fflush(stderr);	
-
-					dealloArgs(&Args);	
-					exit(1);
-					break;
-				case 0:
-					signal(SIGTSTP, SIG_IGN);	
-					// successful child creation
-
-					fflush(stdout);
-					fflush(stdin);
-					fflush(stderr);	 // flush streams for input / output redirection
-					if(handleRedirection(&Args) == 1){
-						// function that redirects input and output depending
-						dealloArgs(&Args);
-						exit(1);
-					}
-							
-					fflush(stdout);
-					fflush(stdin);
-					fflush(stderr);	
-
-					// execute command	
-					execvp(Args.args[0], Args.args);
-							
-					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
-					fflush(stderr);
-
-					// mem clean up
-					dealloArgs(&Args);	
-					exit(2);
-					break;
-				default:
-					// wait for child to come back
-					if(Args.background == 1 && !fg_only){
-						// from the lectures, use of WNOHANG for child to run in background.
-						//pid_t resPid = waitpid(childPid, &childStatus, WNOHANG);
-						for(int i=0; i<100; ++i){
-							if(childPid == 0) break;
-							if(activepids[i] == 0){
-								activepids[i] = childPid;
-								break;
-							}
-						}
-						// process set to run in the background, we are going to store the pis
-
-						// example output says to output the child pid like this
-						fprintf(stdout, "background pid is %d\n", childPid);
-						fflush(stdout);
-						childPid = waitpid(-1, &childStatus, WNOHANG);
-						while(childPid > 0){
-							fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
-							childPid=waitpid(-1, &childStatus, WNOHANG);
-						}	
-					}else{
-						pid_t resPid = waitpid(childPid, &childStatus, 0);
-					}
-
-
-					break;
-			}
-				
-			
-	
-		}
-
-		/* Citation for sync killing of background / zombie processes
-		 * date: 5/1/2022
-		 * Adapted from provided code for synchronous killing of background children
-		 * from the textbook
-		 * Book: Linux Programing Interface
-		 * Author: Michael Kerrisk
-		 * Page: 543
-		 * */
-		for(int i=0; i <100; ++i){
-			childPid = waitpid(activepids[i], &childStatus, WNOHANG);
-			if(childPid > 0){
-				// background process is done
-				fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
-				fflush(stdout);
-				activepids[i] = 0;
-
-			}
-		}
-	
-		fflush(stdout);
-		// trash collection before loop continues
-		dealloArgs(&Args);
-
-		
-	}while(1);	
-	return 0;
 }
 
 
 
-int theProcessReaper(pid_t childPid, int childStatus){
+void checkBackgroundProcesses(void){
 	/* Citation for sync killing of background / zombie processes
-	 * date: 5/1/2022
-	 * Adapted from provided code for synchronous killing of background children
-	 * from the textbook
-	 * Book: Linux Programing Interface
-	 * Author: Michael Kerrisk
-	 * Page: 543
+	* date: 5/1/2022
+	* Adapted from provided code for synchronous killing of background children
+	* from the textbook
+	* Book: Linux Programing Interface
+	* Author: Michael Kerrisk
+	* Page: 543
 	 * */
 	childPid = waitpid(-1, &childStatus, WNOHANG);
-	while(childPid > 0){
-		fprintf(stdout, "background process %d exited with status %d.\n", childPid, childStatus);
-		fflush(stdout);
-		childPid=waitpid(-1, &childStatus, WNOHANG);
+	if(childPid > 0){
+		// remove child from background process arr
+		for(int i=0; i<CHILD_PROCESS_CAP; ++i){
+			if(childPid == activepids[i]){
+				// reset val
+				activepids[i] = 0;
+				num_active_processes--;
+				break;
+			}
+		}
+		// background process is done
+		if(WIFEXITED(childStatus)){
+			fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(childStatus));
+			fflush(stdout);
+		}else{
+			fprintf(stdout, "background process %d was terminated by signal %d.\n", childPid, WTERMSIG(childStatus));
+			fflush(stdout);
+		}
 	}
 
-
-}
-
-
-void sig_handler(int sig){
-	fprintf(stdout, "terminated by signal %d\n", sig);
-	fflush(stdout);
-}
-
-
-
-/* sig_handlerz(void)
- *
- * Function that handles the signal for ctrl+z
- * Toggles between background and foreground mode
- *
- * Displays the message to the user.
- * */
-void sig_handlerz(){
-	//z_f = 99;
-	//write(STDOUT_FILENO, "hey\0", 4);
-	if(fg_only == 1){
-		// exit foreground only
-		fg_only = 0;
-		char msg[34] = "\nExiting foreground-only mode.\n: \0";
-		write(STDOUT_FILENO, msg, sizeof(msg)); 
-		fflush(stdout);
-	}else{
-		fg_only=1;
-		char msg[54] = "\nEntering foreground-only mode. (& is now ignored)\n: \0";
-		write(STDOUT_FILENO, msg, sizeof(msg));
-		fflush(stdout);
-	}
-}
-
-
-
-/* zombie_handler
- * Function that waits for all zombie processes to end
- * and displays to the user when it does and what id ended.
- * */
-void zombie_handler(){
-	pid_t childPid;
-	int childStatus;
-	
-	/* Citation for the use of waitpid
- 	 * Date: 4/29/2022
- 	 * Referenced and used for clean up of zombie processes
- 	 * url: https://linux.die.net/man/2/waitpid
- 	 * */
-	// According to the linux man, pid < -1 means that 
-	// "wait for any child process whose process group ID is equal to
-	// the absolute valid of pid."
-	//
-	// "-1 meaning wait for any child process."
-	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
-		char msg[17] = "\nBackground pid \0";
-		write(STDERR_FILENO, msg, sizeof(msg));
-		
-		fflush(stdout);
-		fflush(stderr);
-		fflush(stdin);
-	}
 }
 
 
@@ -364,7 +257,7 @@ void zombie_handler(){
  * returns: 1 if there was an error; 0 otherwise.
  * */
 int handleRedirection(UserArgs *Args){
-	if(Args->infile[0] != '\0'){
+	if(Args->outfile[0] != '\0'){
 		/* Citation for use of dup2 to read in stdin output into infile
 		 * Author: Michael Kerrisk
 		 * Book: The Linux Programming Interface
@@ -374,10 +267,10 @@ int handleRedirection(UserArgs *Args){
 		 * Adapted frome example code on use of dup2
 		 * */
 		// open in file, get contents from execvp, put it in infile.
-		int fd = open(Args->infile, O_WRONLY | O_CREAT | O_TRUNC, 00700);
+		int fd = open(Args->outfile, O_WRONLY | O_CREAT | O_TRUNC, 00700);
 		if(fd == -1){
 			// error
-			fprintf(stderr, "Cannot open %s for output.\n", Args->infile);
+			fprintf(stderr, "Cannot open %s for output.\n", Args->outfile);
 			fflush(stderr);
 			return 1;
 		}
@@ -388,7 +281,7 @@ int handleRedirection(UserArgs *Args){
 		close(fd);
 	}
 
-	if(Args->outfile[0] != '\0'){
+	if(Args->infile[0] != '\0'){
 		/* Citation for use of dup2 to read in stdin output into infile
  		* Author: Michael Kerrisk
  		* Book: The Linux Programming Interface
@@ -398,11 +291,11 @@ int handleRedirection(UserArgs *Args){
  		* Adapted frome example code on use of dup2
  		* */
 
-		// if there is an outfile
-		int fd2 = open(Args->outfile, O_RDONLY);
+		// if there is an input file
+		int fd2 = open(Args->infile, O_RDONLY);
 		if(fd2 == -1){
 			// error
-			fprintf(stderr, "Cannot open %s for input.\n", Args->outfile);
+			fprintf(stderr, "Cannot open %s for input.\n", Args->infile);
 			fflush(stderr);
 			return 1;
 		}
@@ -431,38 +324,6 @@ int handleRedirection(UserArgs *Args){
 		close(fd3);
 	}	
 	return 0;
-}
-
-
-
-/* Function that displays the args in the struct
- * shows if process is supposed to run in the background
- * shows infiles and outfiles
- * */
-void displayArgs(UserArgs *Args){
-
-	fprintf(stdout, "=====PRINTING ARGS=====\n");
-	fflush(stdout);
-	// testing prints
-	if(Args->args){
-		for(int j = 0; j<Args->amount_args; ++j){
-			fprintf(stdout,"arg: %s\n", Args->args[j]);
-			fflush(stdout);
-		}
-	}
-	if(Args->infile){
-		fprintf(stdout, "infile: %s\n", Args->infile);
-		fflush(stdout);
-	}
-	if(Args->outfile){
-		fprintf(stdout, "outfile: %s\n", Args->outfile);
-		fflush(stdout);
-	}
-	if(Args->background){
-		fprintf(stdout, "background: %d\n", Args->background);
-		fflush(stdout);
-	}
-	return; 
 }
 
 
@@ -552,8 +413,8 @@ int getFullUserInput(UserArgs *Args){
 		}
 		else if(t == ' '||t=='\n'){
 			// t == current; buffer[i] == prev	
-			buffer[i-1] == '>' ? f = 1: 1;
-			buffer[i-1] == '<' ? f = 2: 1;
+			buffer[i-1] == '<' ? f = 1: 1;
+			buffer[i-1] == '>' ? f = 2: 1;
 			buffer[i] = '\0';	
 
 			if(f == 0 && buffer[i-1] != '>' && buffer[i-1] != '<'){
@@ -574,7 +435,7 @@ int getFullUserInput(UserArgs *Args){
 			i = 0;
 
 		}else{
-			//get buffer until u
+			//get buffer until " "
 			buffer[i] = t;
 			i++;
 		}

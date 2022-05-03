@@ -9,6 +9,7 @@
 /* CONSTANTS */
 #define  MAX_LINE_LENGTH  2048
 #define MAX_ARG_NUM  512
+#define CHILD_PROCESS_CAP 30
 
 /* STRUCT DEFINITION*/
 struct userArgs{
@@ -26,15 +27,12 @@ typedef struct userArgs UserArgs;
 int getFullUserInput(UserArgs *Args);
 void cdAndUpdatePWD(char*);
 int handleRedirection(UserArgs *Args);
-
+void printChildStatus(void);
+void checkBackgroundProcesses(void);
 
 /* STRUCT SPECIFIC PROTOTYPES*/
-void displayArgs(UserArgs *Args); // to remove
 void clearArgs(UserArgs *Args); // set everything to 0 or null
 void dealloArgs(UserArgs *Args); // deallocates the malloc'd memory in args struct
 
 /* SIGNAL HANDLERS */
-void sig_handler(int sig);
-void sig_handlerz();
-void zombie_handler();
 
