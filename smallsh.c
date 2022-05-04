@@ -42,7 +42,8 @@ int main(){
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
 	atexit(theProcessReaper);
 	//signals
-
+	
+	// ctrl+z foreground toggle
 	struct sigaction sa_z={0};
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_handler = sigtstp_handler1;
@@ -52,8 +53,17 @@ int main(){
 		fprintf(stderr, "Error with sigaction for ctrl+z\n");
 		fflush(stderr);
 	}
+	
+	// ctrl+c 
+	struct sigaction sa_c={0};
+
 	//setSignals();
 	do{
+		
+		if(num_active_processes > 0 && fg_only == 1){
+			// need to check on those processes?
+			checkBackgroundProcesses();
+		}
 		// struct for user input to go to
 		UserArgs Args;
 		clearArgs(&Args);
@@ -94,12 +104,12 @@ int main(){
 			printChildStatus();
 		}else{
 			// handle other args here
-			sa_z.sa_handler = SIG_IGN;
-
+		
 			childPid = fork();
 			alarm(250);			
 			// pause SIGTSTP
-			
+			sa_z.sa_handler = SIG_DFL;
+
 			/* Citation for switch statement to handle forking
  			 * Date: 4/26/2022
  			 * Copied and adapted from code provided in lectures about forking
@@ -140,10 +150,11 @@ int main(){
 					if(Args.background == 1 && !fg_only){ // if background 	
 						fprintf(stdout, "background pid is %d\n", childPid);
 						fflush(stdout);
+						addToActivePidList(childPid);
 						childPid = (childPid, &childStatus, WNOHANG);
 	
 						// Add the childPid to the list of active background pids
-						addToActivePidList(childPid);			
+									
 					}else{
 						// wait for process to be done.
 						childPid = waitpid(childPid, &childStatus, 0);
@@ -320,6 +331,7 @@ void checkBackgroundProcesses(void){
 			fflush(stdout);
 		}
 	}
+
 
 }
 
