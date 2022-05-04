@@ -26,6 +26,7 @@
 void printUserArgs(UserArgs *Args);
 void sigtstp_handler1(int sig);
 void sigtstp_handler0(int sig);
+void sigint_handler(int sig);
 
 // foreground only check
 volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
@@ -33,6 +34,12 @@ int activepids[CHILD_PROCESS_CAP];
 int num_active_processes=0;
 int childStatus = 0;
 pid_t childPid = -5;
+
+
+// signals
+struct sigaction sa_z={0};
+struct sigaction sa_c={0};
+
 
 
 int main(){
@@ -44,7 +51,6 @@ int main(){
 	//signals
 	
 	// ctrl+z foreground toggle
-	struct sigaction sa_z={0};
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_handler = sigtstp_handler1;
 	sa_z.sa_flags = SA_RESTART;
@@ -55,8 +61,16 @@ int main(){
 	}
 	
 	// ctrl+c 
-	struct sigaction sa_c={0};
+	sigemptyset(&sa_c.sa_mask);
+	sa_c.sa_handler = SIG_IGN;
+	sa_c.sa_flags = 0;
+	if(sigaction(SIGINT, &sa_c, NULL)==-1){
+		// error
+		fprintf(stderr, "Error with sigaction for ctrl+c\n");
+		fflush(stderr);
 
+	}
+	
 	//setSignals();
 	do{
 		
@@ -109,8 +123,17 @@ int main(){
 			alarm(250);			
 			// pause SIGTSTP
 			sa_z.sa_handler = SIG_DFL;
+			sigaction(SIGTSTP, &sa_z, NULL);
 
-			/* Citation for switch statement to handle forking
+			if(Args.background == 0){
+
+				// accept SIGINT
+				sa_c.sa_handler = sigint_handler;
+				sigaction(SIGINT, &sa_c, NULL);
+
+			}
+
+						/* Citation for switch statement to handle forking
  			 * Date: 4/26/2022
  			 * Copied and adapted from code provided in lectures about forking
  			 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-environment?module_item_id=22026550
@@ -122,7 +145,8 @@ int main(){
 					dealloArgs(&Args);	
 					exit(1);
 					break;
-				case 0:	
+				case 0:
+						
 					fflush(stdin);
 					fflush(stdout);
 					fflush(stderr);
@@ -147,14 +171,13 @@ int main(){
 					exit(1);
 				default:
 					// parent
-					if(Args.background == 1 && !fg_only){ // if background 	
+					if(Args.background == 1 && fg_only == 0){ // if background 	
 						fprintf(stdout, "background pid is %d\n", childPid);
 						fflush(stdout);
-						addToActivePidList(childPid);
-						childPid = (childPid, &childStatus, WNOHANG);
-	
 						// Add the childPid to the list of active background pids
-									
+
+						addToActivePidList(childPid);
+						childPid = (childPid, &childStatus, WNOHANG);			
 					}else{
 						// wait for process to be done.
 						childPid = waitpid(childPid, &childStatus, 0);
@@ -164,6 +187,10 @@ int main(){
 						// kill child
 						kill(childPid, -1);
 					}	
+					// accept SIGINT
+					sa_c.sa_handler = SIG_IGN;
+					sigaction(SIGINT, &sa_c, NULL);
+
 					break;	
 				}			
 	
@@ -178,6 +205,12 @@ int main(){
 	return 0;
 }
 
+
+void sigint_handler(int sig){
+	char msg[26] = "\nTerminated by signal 2.\n\0";
+	write(STDOUT_FILENO, msg, sizeof(msg));
+	kill(childPid, -1);
+}
 
 
 // sets fg_mode to 0
@@ -252,7 +285,7 @@ void printChildStatus(void){
 		// if child was exited
 		fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
 		fflush(stdout);
-	}else{
+	}else if(WIFSIGNALED(&childStatus)){
 		fprintf(stdout, "signal value %d\n", WTERMSIG(childStatus));
 		fflush(stdout);
 	}
@@ -315,20 +348,22 @@ void checkBackgroundProcesses(void){
 	// so that if we exit while a process is active we can kill it before we quit.
 	int status = -5;
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
-		pid_t doneCheck = waitpid(activepids[i], &status, WNOHANG);
-		if(doneCheck > 0){
-			// remove child from background process arr
-			activepids[i] = 0;
-			num_active_processes--;
-			childPid = doneCheck;
-			childStatus = status;
-			// just like the lecture
-			if(WIFEXITED(childStatus)){
-				fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
-			}else{
-				fprintf(stdout, "background process %d terminated with signal %d.\n", doneCheck, WTERMSIG(status));
+		if(activepids[i]>0){
+			pid_t doneCheck = waitpid(activepids[i], &status, WNOHANG);
+			if(doneCheck > 0){
+				// remove child from background process arr
+				activepids[i] = 0;
+				num_active_processes--;
+				childPid = doneCheck;
+				childStatus = status;
+				// just like the lecture
+				if(WIFEXITED(childStatus)){
+					fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
+				}else{
+					fprintf(stdout, "background process %d terminated with signal %d.\n", doneCheck, WTERMSIG(status));
+				}
+				fflush(stdout);
 			}
-			fflush(stdout);
 		}
 	}
 
