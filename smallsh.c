@@ -24,6 +24,8 @@
 #include "smallsh.h"
 
 void printUserArgs(UserArgs *Args);
+void sigtstp_handler1(int sig);
+void sigtstp_handler0(int sig);
 
 // foreground only check
 volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
@@ -39,11 +41,29 @@ int main(){
 
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
 	atexit(theProcessReaper);
+	//signals
+
+	struct sigaction sa_z={0};
+	sigemptyset(&sa_z.sa_mask);
+	sa_z.sa_handler = sigtstp_handler1;
+	sa_z.sa_flags = SA_RESTART;
+	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
+		// error
+		fprintf(stderr, "Error with sigaction for ctrl+z\n");
+		fflush(stderr);
+	}
 	//setSignals();
 	do{
 		// struct for user input to go to
 		UserArgs Args;
 		clearArgs(&Args);
+		if(fg_only == 0){
+			sa_z.sa_handler = sigtstp_handler1;
+			sigaction(SIGTSTP, &sa_z, NULL);
+		}else{
+			sa_z.sa_handler = sigtstp_handler0;
+			sigaction(SIGTSTP, &sa_z, NULL);
+		}
 		// get user input from stdin
 		int r = 1;
 		while(r==1){
@@ -74,9 +94,12 @@ int main(){
 			printChildStatus();
 		}else{
 			// handle other args here
+			sa_z.sa_handler = SIG_IGN;
+
 			childPid = fork();
 			alarm(250);			
-
+			// pause SIGTSTP
+			
 			/* Citation for switch statement to handle forking
  			 * Date: 4/26/2022
  			 * Copied and adapted from code provided in lectures about forking
@@ -134,6 +157,7 @@ int main(){
 				}			
 	
 		}
+		
 		// check if a child is done
 		checkBackgroundProcesses();
 	
@@ -141,6 +165,24 @@ int main(){
 		dealloArgs(&Args);
 	}while(1);	
 	return 0;
+}
+
+
+
+// sets fg_mode to 0
+void sigtstp_handler0(int sig){
+	char msg[33] = "\nExiting foreground-only mode\n: \0";
+	write(STDOUT_FILENO, msg, sizeof(msg));
+	fg_only = 0;
+}
+
+
+
+// sets fg_mode to 1
+void sigtstp_handler1(int sig){
+	char msg[53] = "\nEntering foreground-only mode (& is now ignored)\n: \0";
+	write(STDOUT_FILENO, msg, sizeof(msg));
+	fg_only = 1;
 }
 
 
