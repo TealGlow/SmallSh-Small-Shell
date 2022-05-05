@@ -21,9 +21,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-// my header contains struct definition, function prototypes, and constants
-//#include "smallsh.h"
-
 // CONSTANTS
 #define MAX_LINE_LENGTH 2048
 #define MAX_ARG_NUM 512
