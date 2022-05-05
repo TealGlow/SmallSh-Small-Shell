@@ -36,10 +36,6 @@ int childStatus = 0;
 pid_t childPid = -5;
 
 
-// signals
-struct sigaction sa_z={0};
-struct sigaction sa_c={0};
-
 
 
 int main(){
@@ -49,7 +45,11 @@ int main(){
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
 	atexit(theProcessReaper);
 	//signals
-	
+	// signals
+	struct sigaction sa_z={0};
+	struct sigaction sa_c={0};
+
+
 	// ctrl+z foreground toggle
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_handler = sigtstp_handler1;
@@ -73,11 +73,9 @@ int main(){
 	
 	//setSignals();
 	do{
-		
-		if(num_active_processes > 0 && fg_only == 1){
-			// need to check on those processes?
-			checkBackgroundProcesses();
-		}
+		// check if a child is done
+		checkBackgroundProcesses();
+
 		// struct for user input to go to
 		UserArgs Args;
 		clearArgs(&Args);
@@ -120,7 +118,7 @@ int main(){
 			// handle other args here
 		
 			childPid = fork();
-			alarm(250);			
+			//alarm(250);			
 			// pause SIGTSTP
 			sa_z.sa_handler = SIG_DFL;
 			sigaction(SIGTSTP, &sa_z, NULL);
@@ -170,6 +168,17 @@ int main(){
 					dealloArgs(&Args);
 					exit(1);
 				default:
+					// ignore SIGINT again
+					sa_c.sa_handler = SIG_IGN;
+					sigaction(SIGINT, &sa_c, NULL);
+					if(fg_only == 0){
+						sa_z.sa_handler = sigtstp_handler1;
+						sigaction(SIGTSTP, &sa_z, NULL);
+					}else{
+						sa_z.sa_handler = sigtstp_handler0;
+						sigaction(SIGTSTP, &sa_z, NULL);
+					}
+
 					// parent
 					if(Args.background == 1 && fg_only == 0){ // if background 	
 						fprintf(stdout, "background pid is %d\n", childPid);
@@ -187,18 +196,15 @@ int main(){
 						// kill child
 						kill(childPid, -1);
 					}	
-					// accept SIGINT
-					sa_c.sa_handler = SIG_IGN;
-					sigaction(SIGINT, &sa_c, NULL);
+					// check if a child is done
+					checkBackgroundProcesses();
+	
 
 					break;	
 				}			
 	
 		}
 		
-		// check if a child is done
-		checkBackgroundProcesses();
-	
 		// trash collection before loop continues
 		dealloArgs(&Args);
 	}while(1);	
@@ -347,9 +353,10 @@ void checkBackgroundProcesses(void){
 	// we need to loop through and check each active child, if its finished we removed it
 	// so that if we exit while a process is active we can kill it before we quit.
 	int status = -5;
-	for(int i=0; i<CHILD_PROCESS_CAP; ++i){
+	for(int i=0; i<CHILD_PROCESS_CAP; ++i){	
 		if(activepids[i]>0){
 			pid_t doneCheck = waitpid(activepids[i], &status, WNOHANG);
+
 			if(doneCheck > 0){
 				// remove child from background process arr
 				activepids[i] = 0;
@@ -366,6 +373,14 @@ void checkBackgroundProcesses(void){
 			}
 		}
 	}
+	/*while((childPid = waitpid(-1, &childStatus, childPid)) > 0){
+		if(WIFEXITED(childStatus)){
+			fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(&childStatus));
+		}else{
+			fprintf(stdout, "background process %d terminated with signal %d.\n", childPid, WTERMSIG(&childStatus));
+		}
+	}*/
+	
 
 
 }
