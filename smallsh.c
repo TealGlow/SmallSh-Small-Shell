@@ -1,6 +1,6 @@
 /* Name: Alyssa Comstock
  * Class: CS344 - Operating Systems
- * Last Date Edited:  
+ * Last Date Edited: 5/4/2022
  * Assignment: Smallsh.c Portfolio Assignment
  * Description: Contains a smallsh program that handles user commands
  * and runs the user command either in the foreground or background.
@@ -22,21 +22,55 @@
 #include <signal.h>
 
 // my header contains struct definition, function prototypes, and constants
-#include "smallsh.h"
+//#include "smallsh.h"
 
-void printUserArgs(UserArgs *Args);
+// CONSTANTS
+#define MAX_LINE_LENGTH 2048
+#define MAX_ARG_NUM 512
+#define CHILD_PROCESS_CAP 30
+
+// STRUCT DEFINITION
+struct userArgs{
+	char * args[MAX_ARG_NUM]; // contains the args
+	char infile[256]; // contains the infile supplued by the user
+	char outfile[256]; // contains the outfile supplied by the user
+	int background; // & symbol, contains info of if the cmd is run in background mode or not
+	int amount_args; // amount of args used from the char*[] used for dellocation
+};
+
+typedef struct userArgs UserArgs;
+
+// FUNCTION PROTOTYPES
+int getFullUserInput(UserArgs *Args);
+void cdAndUpdatePWD(char*);
+int handleRedirection(UserArgs *Args);
+void printChildStatus(void);
+void checkBackgroundProcesses(void);
+void addToActivePidList(int childPid);
+void theProcessReaper(void);
+void flushAllStreams(void);
+
+// SIGNAL HANDLERS PROTOTPES
 void sigtstp_handler1(int sig);
 void sigtstp_handler0(int sig);
 void sigint_handler(int sig);
-void flushAllStreams(void);
 
-// foreground only check
+// STRUCT SPECIFIC PROTOTYPES
+void clearArgs(UserArgs *Args); // set everything to 0 or null
+void dealloArgs(UserArgs *Args); // dellocate Args
+
+// globals
 volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
 int activepids[CHILD_PROCESS_CAP];
 int num_active_processes=0;
 int childStatus = 0;
 pid_t childPid = -5;
 volatile sig_atomic_t signal_rec; // Since sig is ununsed but required I'm storing it here just in case
+
+// signals
+struct sigaction sa_z;
+struct sigaction sa_c;
+
 
 
 
@@ -45,13 +79,8 @@ int main(){
 	fflush(stdout);	
 
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
-	atexit(theProcessReaper);
-	//signals
-	// signals
-	struct sigaction sa_z;
-	struct sigaction sa_c;
-
-
+	atexit(theProcessReaper); // at exit each process is culled
+	
 	// ctrl+z foreground toggle
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_handler = sigtstp_handler1;
@@ -70,10 +99,8 @@ int main(){
 		// error
 		fprintf(stderr, "Error with sigaction for ctrl+c\n");
 		fflush(stderr);
-
 	}
-	
-	//setSignals();
+	// main loop
 	do{
 		// check if a child is done
 		checkBackgroundProcesses();
@@ -81,7 +108,8 @@ int main(){
 		// struct for user input to go to
 		UserArgs Args;
 		clearArgs(&Args);
-		if(fg_only == 0){
+		// check if the final handlers need to be toggled before user input comes back
+		if(fg_only == 0){ 
 			sa_z.sa_handler = sigtstp_handler1;
 			sigaction(SIGTSTP, &sa_z, NULL);
 		}else{
@@ -99,8 +127,6 @@ int main(){
 				dealloArgs(&Args);
 			}
 		}
-	
-		//printUserArgs(&Args);	
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
 			dealloArgs(&Args);
@@ -117,22 +143,19 @@ int main(){
 			printChildStatus();
 		}else{
 			// handle other args here
-		
-			childPid = fork();
-			//alarm(250);			
+			childPid = fork();	
+	
 			// pause SIGTSTP
 			sa_z.sa_handler = SIG_DFL;
 			sigaction(SIGTSTP, &sa_z, NULL);
 
 			if(Args.background == 0){
-
 				// accept SIGINT
 				sa_c.sa_handler = sigint_handler;
 				sigaction(SIGINT, &sa_c, NULL);
-
 			}
 
-						/* Citation for switch statement to handle forking
+			/* Citation for switch statement to handle forking
  			 * Date: 4/26/2022
  			 * Copied and adapted from code provided in lectures about forking
  			 * Url: https://canvas.oregonstate.edu/courses/1870063/pages/exploration-environment?module_item_id=22026550
@@ -178,25 +201,22 @@ int main(){
 						fprintf(stdout, "background pid is %d\n", childPid);
 						fflush(stdout);
 						// Add the childPid to the list of active background pids
-
 						addToActivePidList(childPid);
+						// let the child go with WNOHANG
 						childPid = waitpid(childPid, &childStatus, WNOHANG);			
 					}else{
 						// wait for process to be done.
 						childPid = waitpid(childPid, &childStatus, 0);
 					}
-					// check if a child has returned
+					// check if a child has returned but it failed
 					if(WEXITSTATUS(childStatus) == 1){
 						// kill child
 						kill(childPid, -1);
 					}	
 					// check if a child is done
 					checkBackgroundProcesses();
-	
-
 					break;	
-				}			
-	
+				}				
 		}
 		
 		// trash collection before loop continues
@@ -220,6 +240,13 @@ void flushAllStreams(void){
 
 
 
+/* siging_handler
+ * Function that handles terminating by signal 2 for a 
+ * child process. When it is received, child process will
+ * be killed.
+ *
+ * @param: sig: signal, unused but required for signal handling.
+ * */
 void sigint_handler(int sig){
 	char msg[26] = "\nTerminated by signal 2.\n\0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
@@ -229,21 +256,33 @@ void sigint_handler(int sig){
 
 
 
-// sets fg_mode to 0
+/* sigtstp_handler0
+ * Function that sets the global flag for 
+ * foreground only mode to 0.  Also displays a message to the
+ * user when the foreground only mode is turned off
+ *
+ * @ param: sig: unused but required for signal handling.
+ * */
 void sigtstp_handler0(int sig){
 	char msg[33] = "\nExiting foreground-only mode\n: \0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
-	fg_only = 0;
+	fg_only = 0; // turned off fg_only mode
 	signal_rec = sig;
 }
 
 
 
-// sets fg_mode to 1
+/* sigtstp_handler1
+ * Function that sets the global flag for 
+ * foreground only mode to 1.  Also displays a message to the
+ * user when the foreground only mode is turned on
+ *  
+ * @ param: sig: unused but required for signal handling.
+ * */
 void sigtstp_handler1(int sig){
 	char msg[53] = "\nEntering foreground-only mode (& is now ignored)\n: \0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
-	fg_only = 1;
+	fg_only = 1; // set fg_only mode to 1, turn it on
 	signal_rec=sig;
 }
 
@@ -304,49 +343,10 @@ void printChildStatus(void){
 		fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
 		fflush(stdout);
 	}else if(WIFSIGNALED(&childStatus)){
+		// if there is a status, post it
 		fprintf(stdout, "signal value %d\n", WTERMSIG(childStatus));
 		fflush(stdout);
 	}
-
-}
-
-
-
-void printUserArgs(UserArgs *Args){
-	for(int i=0; i<Args->amount_args; ++i){
-		fprintf(stdout, "Arg: |%s|\n", Args->args[i]);
-	}
-}
-
-
-void setSignals(){
-	// Signal handlers!
- 	// Signal handler for when a child finishes:
-	//struct sigaction s_child;
-	
-	// for signal handling for ctrl+c	
-	//struct sigaction sa_c;
-	/*
-	sigemptyset(&sa_c.sa_mask);
-	sa_c.sa_flags = 0;
-	sa_c.sa_handler = sig_handler;
-	if(sigaction(SIGINT, &sa_c, NULL) == -1){
-		fprintf(stdout, "error sig_c\n");
-		flushAllStreams();
-		exit(1);
-	}*/
-
-	/*
-	struct sigaction sa_z;
-
-	sigemptyset(&sa_z.sa_mask);
-	sa_z.sa_flags = SA_RESTART; // flag to make reentry not interrupt user command input
-	sa_z.sa_handler = sig_handlerz;
-	if(sigaction(SIGTSTP, &sa_z, NULL) == -1){
-		fprintf(stdout, "error sig_z\n");
-		fflush(stdout);
-		exit(1);
-	}*/
 
 }
 
@@ -385,16 +385,6 @@ void checkBackgroundProcesses(void){
 			}
 		}
 	}
-	/*while((childPid = waitpid(-1, &childStatus, childPid)) > 0){
-		if(WIFEXITED(childStatus)){
-			fprintf(stdout, "background process %d exited with status %d.\n", childPid, WEXITSTATUS(&childStatus));
-		}else{
-			fprintf(stdout, "background process %d terminated with signal %d.\n", childPid, WTERMSIG(&childStatus));
-		}
-	}*/
-	
-
-
 }
 
 
@@ -490,15 +480,15 @@ void cdAndUpdatePWD(char * toGoTo){
 	if(toGoTo == NULL){
 		// if no arg to cd to, cd to HOME env val
 		toGoTo = getenv("HOME");
-		chdir(toGoTo);
-	}else if(toGoTo){
-		if(chdir(toGoTo) == -1){
-			// error message but its not enough to exit
-			fprintf(stderr, "Error with cd: dir does not exist\n");
-			fflush(stderr);
-			return;
-	
-		}
+	}
+	int res =  chdir(toGoTo);
+
+	// if chdir failed print error
+	if(res == -1){
+		// error message but its not enough to exit
+		fprintf(stderr, "Error with cd: dir does not exist\n");
+		fflush(stderr);
+		return;
 	}
 }
 
@@ -520,10 +510,7 @@ int getFullUserInput(UserArgs *Args){
 	char t = 0;
 	size_t i = 0;
 	fprintf(stdout, ": ");
-	fflush(stdout);
-
-
-	fflush(stdin);
+	flushAllStreams();
 
 	do{
 		t = fgetc(stdin);
@@ -556,7 +543,6 @@ int getFullUserInput(UserArgs *Args){
 				i++; // add up how many char we added
 			}
 			free(p);
-
 		}
 		else if(t == ' '||t=='\n'){
 			// t == current; buffer[i] == prev	
@@ -606,7 +592,6 @@ int getFullUserInput(UserArgs *Args){
 
 
 
-
 /* clearArgs(*Args)
  * Function that resets all the varaibles in the UserArgs object struct
  * Gets the struct and sets all the values to 0, NULL or \0 when needed
@@ -614,15 +599,13 @@ int getFullUserInput(UserArgs *Args){
  * @params: Args: struct object to clear.
  * Returns: nothing
  * */
-void clearArgs(UserArgs *Args){
-	
+void clearArgs(UserArgs *Args){	
 	// resetting vars
 	memset(Args->infile, '\0', sizeof(char)*MAX_ARG_NUM);
 	memset(Args->infile, '\0', sizeof(char)*MAX_ARG_NUM);
 	for(int i=0; i<MAX_ARG_NUM; ++i) Args->args[i] = NULL;
 	Args->background = 0;
 	Args->amount_args = 0;
-
 }
 
 
