@@ -9,6 +9,7 @@
 /* setenv(), unsetenv()  macro*/
 #define _BSD_SOURCE
 #define _GNU_SOURCE
+#define _POSIX_C_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,7 @@ void printUserArgs(UserArgs *Args);
 void sigtstp_handler1(int sig);
 void sigtstp_handler0(int sig);
 void sigint_handler(int sig);
+void flushAllStreams(void);
 
 // foreground only check
 volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
@@ -34,7 +36,7 @@ int activepids[CHILD_PROCESS_CAP];
 int num_active_processes=0;
 int childStatus = 0;
 pid_t childPid = -5;
-
+volatile sig_atomic_t signal_rec; // Since sig is ununsed but required I'm storing it here just in case
 
 
 
@@ -46,8 +48,8 @@ int main(){
 	atexit(theProcessReaper);
 	//signals
 	// signals
-	struct sigaction sa_z={0};
-	struct sigaction sa_c={0};
+	struct sigaction sa_z;
+	struct sigaction sa_c;
 
 
 	// ctrl+z foreground toggle
@@ -89,14 +91,13 @@ int main(){
 		// get user input from stdin
 		int r = 1;
 		while(r==1){
-			fflush(stdin);
-			fflush(stdout);
-			fflush(stderr);
-
+			flushAllStreams();
 			clearArgs(&Args);
 			
 			r = getFullUserInput(&Args);
-			r == 1  ? dealloArgs(&Args) : 1;
+			if(r==1){
+				dealloArgs(&Args);
+			}
 		}
 	
 		//printUserArgs(&Args);	
@@ -144,21 +145,14 @@ int main(){
 					exit(1);
 					break;
 				case 0:
-						
-					fflush(stdin);
-					fflush(stdout);
-					fflush(stderr);
-	
+					flushAllStreams();	
 					// successful child creation
 					if(handleRedirection(&Args) == 1){
 						// function that redirects input and output depending
 						dealloArgs(&Args);
 						exit(1);
 					}	
-					fflush(stdin);
-					fflush(stdout);
-					fflush(stderr);
-
+					flushAllStreams();	
 					// execute command
 					execvp(Args.args[0], Args.args);			
 					fprintf(stderr, "%s: no such file or directory\n", Args.args[0]);
@@ -186,7 +180,7 @@ int main(){
 						// Add the childPid to the list of active background pids
 
 						addToActivePidList(childPid);
-						childPid = (childPid, &childStatus, WNOHANG);			
+						childPid = waitpid(childPid, &childStatus, WNOHANG);			
 					}else{
 						// wait for process to be done.
 						childPid = waitpid(childPid, &childStatus, 0);
@@ -212,11 +206,27 @@ int main(){
 }
 
 
+
+/* flushAllStreams()
+ * Function to flush stdout, stdin, and stderr
+ * This is done before specific critical points where its better be to safe
+ * and flush all streams just in case.
+ * */
+void flushAllStreams(void){
+	fflush(stdout);
+	fflush(stdin);
+	fflush(stderr);
+}
+
+
+
 void sigint_handler(int sig){
 	char msg[26] = "\nTerminated by signal 2.\n\0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
 	kill(childPid, -1);
+	signal_rec = sig;
 }
+
 
 
 // sets fg_mode to 0
@@ -224,6 +234,7 @@ void sigtstp_handler0(int sig){
 	char msg[33] = "\nExiting foreground-only mode\n: \0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
 	fg_only = 0;
+	signal_rec = sig;
 }
 
 
@@ -233,6 +244,7 @@ void sigtstp_handler1(int sig){
 	char msg[53] = "\nEntering foreground-only mode (& is now ignored)\n: \0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
 	fg_only = 1;
+	signal_rec=sig;
 }
 
 
@@ -532,10 +544,10 @@ int getFullUserInput(UserArgs *Args){
  	 		 * */
 
 			pid_t pid = getpid();
-			int length = snprintf(NULL, 0, "%jd", pid);
+			int length = snprintf(NULL, 0, "%ld", (long)pid);
 			char *p;
 			p = malloc(length+1); 
-			snprintf(p, length+1, "%jd", pid);
+			snprintf(p, length+1, "%ld",(long) pid);
 			i--; // go back 1 to change the previous $ into the pid
 			for(int j=0; j<length; j++){
 				// because string pid is going to be of any length we
