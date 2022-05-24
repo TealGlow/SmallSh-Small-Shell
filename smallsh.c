@@ -9,7 +9,8 @@
 /* setenv(), unsetenv()  macro*/
 #define _BSD_SOURCE
 #define _GNU_SOURCE
-#define _POSIX_C_SOURCE
+#define _POSIX_SOURCE
+#define _XOPEN_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +62,7 @@ volatile sig_atomic_t fg_only = 0; // 0 == bg accepted; 1 == fg only mode.
 int activepids[CHILD_PROCESS_CAP];
 int num_active_processes=0;
 int childStatus = 0;
-pid_t childPid = -5;
+volatile pid_t childPid = -5;
 volatile sig_atomic_t signal_rec; // Since sig is ununsed but required I'm storing it here just in case
 
 // signals
@@ -72,12 +73,10 @@ struct sigaction sa_c;
 
 
 int main(){
-	fprintf(stdout, "pid: %d\n", getpid());
-	fflush(stdout);	
-
 	for(int i=0; i<CHILD_PROCESS_CAP; ++i) activepids[i]=-1; // set up this arr
 	atexit(theProcessReaper); // at exit each process is culled
-	
+
+	int bg_status=0;	
 	// ctrl+z foreground toggle
 	sigemptyset(&sa_z.sa_mask);
 	sa_z.sa_handler = sigtstp_handler1;
@@ -127,6 +126,8 @@ int main(){
 		// check first arg for exit, cd, status in a chain
 		if(strcmp(Args.args[0], "exit") == 0 || strcmp(Args.args[0], "exit\n") == 0){	
 			dealloArgs(&Args);
+			sa_c.sa_handler = SIG_DFL;
+			sigaction(SIGINT, &sa_c, NULL);
 			// get rid of zombies
 			theProcessReaper();	
 			// we are done here!
@@ -136,7 +137,7 @@ int main(){
 			// cd to user defined dir in the command
 			cdAndUpdatePWD(Args.args[1]);
 		}else if(strcmp(Args.args[0], "status") == 0 || strcmp(Args.args[0], "status\n") == 0){
-			// post the status to the user
+			// post the status to the user of the last FOREGROUND status
 			printChildStatus();
 		}else{
 			// handle other args here
@@ -146,12 +147,7 @@ int main(){
 			sa_z.sa_handler = SIG_DFL;
 			sigaction(SIGTSTP, &sa_z, NULL);
 
-			if(Args.background == 0){
-				// accept SIGINT
-				sa_c.sa_handler = sigint_handler;
-				sigaction(SIGINT, &sa_c, NULL);
-			}
-
+			
 			/* Citation for switch statement to handle forking
  			 * Date: 4/26/2022
  			 * Copied and adapted from code provided in lectures about forking
@@ -182,9 +178,6 @@ int main(){
 					dealloArgs(&Args);
 					exit(1);
 				default:
-					// ignore SIGINT again
-					sa_c.sa_handler = SIG_IGN;
-					sigaction(SIGINT, &sa_c, NULL);
 					if(fg_only == 0){
 						sa_z.sa_handler = sigtstp_handler1;
 						sigaction(SIGTSTP, &sa_z, NULL);
@@ -195,20 +188,34 @@ int main(){
 
 					// parent
 					if(Args.background == 1 && fg_only == 0){ // if background 	
+						// ignore SIGINT again
+						sa_c.sa_handler = SIG_IGN;
+						sigaction(SIGINT, &sa_c, NULL);
+
 						fprintf(stdout, "background pid is %d\n", childPid);
 						fflush(stdout);
 						// Add the childPid to the list of active background pids
 						addToActivePidList(childPid);
 						// let the child go with WNOHANG
-						childPid = waitpid(childPid, &childStatus, WNOHANG);			
+						int res = waitpid(childPid, &bg_status, WNOHANG);
 					}else{
+						if(Args.background == 0){
+							// accept SIGINT
+							sa_c.sa_handler = sigint_handler;
+							sigaction(SIGINT, &sa_c, NULL);
+						}
+
 						// wait for process to be done.
-						childPid = waitpid(childPid, &childStatus, 0);
+						int res = waitpid(childPid, &childStatus, 0);
+						sa_c.sa_handler = SIG_IGN;
+						sigaction(SIGINT, &sa_c, NULL);
+
+
 					}
 					// check if a child has returned but it failed
 					if(WEXITSTATUS(childStatus) == 1){
 						// kill child
-						kill(childPid, -1);
+						kill(childPid, SIGINT);
 					}	
 					// check if a child is done
 					checkBackgroundProcesses();
@@ -247,7 +254,8 @@ void flushAllStreams(void){
 void sigint_handler(int sig){
 	char msg[26] = "\nTerminated by signal 2.\n\0";
 	write(STDOUT_FILENO, msg, sizeof(msg));
-	kill(childPid, -1);
+	fprintf(stdout,"childpid: %d", childPid);
+	kill(childPid, 2);
 	signal_rec = sig;
 }
 
@@ -337,7 +345,7 @@ void printChildStatus(void){
 	 * */
 	if(WIFEXITED(childStatus)){
 		// if child was exited
-		fprintf(stdout,"exit value  %d\n", WEXITSTATUS(childStatus));
+		fprintf(stdout,"exit value %d\n", WEXITSTATUS(childStatus));
 		fflush(stdout);
 	}else if(WIFSIGNALED(&childStatus)){
 		// if there is a status, post it
@@ -371,12 +379,12 @@ void checkBackgroundProcesses(void){
 				activepids[i] = 0;
 				num_active_processes--;
 				childPid = doneCheck;
-				childStatus = status;
 				// just like the lecture
-				if(WIFEXITED(childStatus)){
+				if(WIFEXITED(status)){
 					fprintf(stdout, "background process %d exited with status %d.\n", doneCheck, WEXITSTATUS(status));
 				}else{
 					fprintf(stdout, "background process %d terminated with signal %d.\n", doneCheck, WTERMSIG(status));
+					childStatus = status;
 				}
 				fflush(stdout);
 			}
