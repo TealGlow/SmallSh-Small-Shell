@@ -3,5 +3,5 @@ Assignment: SmallSH
 Class: CS344
 
 How to compile and run:
-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -o smallsh smallsh.c
-valgrind ./smallsh
+gcc -std=c99 -o smallsh smallsh.c
+./smallsh
